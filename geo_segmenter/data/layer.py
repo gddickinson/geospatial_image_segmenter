@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple, List
 import numpy as np
-from PyQt6.QtGui import QPainter, QImage
+from PyQt6.QtGui import QPainter, QImage, QColor
 from PyQt6.QtCore import QObject, pyqtSignal, QRectF
 from PIL import Image
 import rasterio
@@ -12,7 +12,9 @@ from ..utils.logger import setup_logger
 from ..utils.geo_utils import transform_coordinates
 from .. import config
 
+
 logger = setup_logger(__name__)
+
 
 class Layer(QObject):
     """Base class for all map layers."""
@@ -442,4 +444,93 @@ class LidarLayer(Layer):
 
         except Exception as e:
             logger.error(f"Error rendering LIDAR layer: {str(e)}")
+            logger.exception(e)
+
+"""Layer for displaying segmentation results."""
+
+class SegmentationLayer(Layer):
+    """Layer for displaying segmentation/classification results."""
+
+    def __init__(self, name: str, data: np.ndarray, class_colors: Dict[str, QColor], extent: tuple):
+        """Initialize segmentation layer.
+
+        Args:
+            name: Layer name
+            data: Segmentation mask (2D array of class indices)
+            class_colors: Dictionary mapping class names to colors
+            extent: Layer extent (min_x, min_y, max_x, max_y)
+        """
+        super().__init__(name)
+        self.data = data
+        self.class_colors = class_colors
+        self._extent = extent
+
+        # Create QImage for rendering
+        self._create_image()
+
+    def _create_image(self):
+        """Create QImage from segmentation data."""
+        height, width = self.data.shape
+        self.image = QImage(width, height, QImage.Format.Format_ARGB32)
+        self.image.fill(0)  # Initialize transparent
+
+        # Create mapping of indices to colors
+        class_indices = {i: color for i, (_, color) in enumerate(self.class_colors.items())}
+
+        # Create array of pixels
+        pixels = np.zeros((height, width, 4), dtype=np.uint8)
+        for idx, color in class_indices.items():
+            mask = self.data == idx
+            pixels[mask] = [color.red(), color.green(), color.blue(), 128]  # Semi-transparent
+
+        # Convert to QImage
+        for y in range(height):
+            for x in range(width):
+                self.image.setPixelColor(x, y, QColor(*pixels[y, x]))
+
+    def extent(self) -> tuple:
+        """Get layer extent."""
+        return self._extent
+
+    def render(self, painter: QPainter, map_canvas) -> None:
+        """Render segmentation results.
+
+        Args:
+            painter: QPainter object
+            map_canvas: MapCanvas widget
+        """
+        if not self.visible:
+            return
+
+        try:
+            # Get viewport dimensions
+            width = map_canvas.width()
+            height = map_canvas.height()
+
+            # Calculate display size and position
+            viewport_bounds = map_canvas.viewport_bounds
+            if viewport_bounds:
+                # Calculate scale factors
+                world_width = viewport_bounds[2] - viewport_bounds[0]
+                world_height = viewport_bounds[3] - viewport_bounds[1]
+
+                if world_width > 0 and world_height > 0:
+                    # Calculate image position in viewport
+                    x_scale = width / world_width
+                    y_scale = height / world_height
+
+                    img_x = (self._extent[0] - viewport_bounds[0]) * x_scale
+                    img_y = (viewport_bounds[3] - self._extent[3]) * y_scale
+                    img_width = (self._extent[2] - self._extent[0]) * x_scale
+                    img_height = (self._extent[3] - self._extent[1]) * y_scale
+
+                    # Set opacity
+                    painter.setOpacity(self.opacity)
+
+                    # Draw image
+                    target_rect = QRectF(img_x, img_y, img_width, img_height)
+                    painter.drawImage(target_rect, self.image)
+
+        except Exception as e:
+            logger.error(f"Error rendering segmentation layer: {str(e)}")
             logger.exception(e)
