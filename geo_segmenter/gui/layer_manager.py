@@ -10,7 +10,7 @@ from typing import Optional, List, Dict
 
 import rasterio
 
-from ..data.layer import Layer, RasterLayer, VectorLayer, LidarLayer
+from ..data.layer import Layer, RasterLayer, VectorLayer, LidarLayer, SegmentationLayer
 from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -166,6 +166,10 @@ class LayerManager(QWidget):
                 icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
             elif isinstance(layer, LidarLayer):
                 icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon)
+            elif isinstance(layer, SegmentationLayer):
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton)
+            else:
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
             item.setIcon(0, icon)
 
             # Store layer reference

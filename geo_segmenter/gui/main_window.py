@@ -4,7 +4,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                            QPushButton, QLabel, QFileDialog, QMessageBox,
                            QDockWidget, QToolBar, QStatusBar, QComboBox,
-                           QProgressBar, QMenu, QMenuBar, QStyle, QApplication)
+                           QProgressBar, QMenu, QMenuBar, QStyle, QApplication, QProgressDialog)
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction, QIcon, QActionGroup
 
@@ -16,7 +16,7 @@ from ..utils.logger import setup_logger
 from ..utils.geo_utils import get_raster_info
 from ..utils import lidar_utils
 from .map_canvas import MapCanvas
-from .layer_manager import LayerManager, RasterLayer
+from .layer_manager import LayerManager, RasterLayer, SegmentationLayer
 from .. import config
 from .dialogs.label_dialog import LabelingDialog
 from .dialogs.training_dialog import  TrainingDialog
@@ -683,35 +683,59 @@ class MainWindow(QMainWindow):
                                   "Please select a raster layer for segmentation")
                 return
 
-            # Load image data
-            with rasterio.open(active_layer.path) as src:
-                image_data = src.read()
-                image_data = np.moveaxis(image_data, 0, -1)
+            # Show progress dialog
+            progress = QProgressDialog("Running segmentation...", "Cancel", 0, 100, self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.show()
+            QApplication.processEvents()
 
-            # Run prediction
-            prediction = self.current_model.predict(image_data)
+            try:
+                # Load image data
+                with rasterio.open(active_layer.path) as src:
+                    image_data = src.read()
+                    image_data = np.moveaxis(image_data, 0, -1)
+                    transform = src.transform
+                    extent = (
+                        src.bounds.left,
+                        src.bounds.bottom,
+                        src.bounds.right,
+                        src.bounds.top
+                    )
 
-            # Create a new layer for the results
-            # TODO: Implement visualization of segmentation results
+                progress.setValue(25)
+                QApplication.processEvents()
 
-            QMessageBox.information(self, "Segmentation Complete",
-                                  "Segmentation completed successfully!")
+                # Run prediction
+                prediction = self.current_model.predict(image_data)
 
-        except Exception as e:
-            logger.error("Error running segmentation")
-            logger.exception(e)
-            QMessageBox.critical(self, "Error", str(e))
+                progress.setValue(75)
+                QApplication.processEvents()
 
-    def run_segmentation(self):
-        """Run segmentation using the trained model."""
-        try:
-            if not hasattr(self, 'current_model') or not self.current_model:
-                QMessageBox.warning(self, "Warning",
-                                  "Please train a model first")
-                return
+                # Create color mapping from training labels
+                class_colors = {
+                    label.name: label.color
+                    for label in self.label_dialog.labels.values()
+                }
 
-            # TODO: Implement segmentation execution
-            logger.info("Started segmentation execution")
+                # Create segmentation layer
+                layer_name = f"{active_layer.name}_segmentation"
+                seg_layer = SegmentationLayer(
+                    layer_name,
+                    prediction,
+                    class_colors,
+                    extent
+                )
+
+                # Add to layer manager and map
+                self.layer_manager.add_layer(seg_layer)
+                self.map_canvas.add_layer(seg_layer)
+
+                progress.setValue(100)
+                QMessageBox.information(self, "Segmentation Complete",
+                                    "Segmentation completed successfully!")
+
+            finally:
+                progress.close()
 
         except Exception as e:
             logger.error("Error running segmentation")
