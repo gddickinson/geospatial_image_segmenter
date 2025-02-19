@@ -62,6 +62,7 @@ class Layer(QObject):
             self._visible = value
             self.visibility_changed.emit(value)
             self.changed.emit()
+            logger.debug(f"Layer {self.name} visibility changed to {value}")
 
     @property
     def opacity(self) -> float:
