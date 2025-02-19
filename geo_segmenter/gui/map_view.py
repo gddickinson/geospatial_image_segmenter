@@ -1,7 +1,9 @@
 """Map view widget for rendering map content."""
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QPaintEvent, QResizeEvent
+from PyQt6.QtGui import QPainter, QPaintEvent, QResizeEvent, QColor, QImage
+
+import numpy as np
 
 from ..utils.logger import setup_logger
 
@@ -51,6 +53,12 @@ class MapViewWidget(QWidget):
                             logger.exception(e)
             else:
                 logger.debug("No layers to draw")
+
+            # Draw label overlay if in training mode
+            if hasattr(canvas, 'training_mode') and canvas.training_mode:
+                main_window = canvas.parent()
+                if main_window and hasattr(main_window, 'label_dialog'):
+                    self.draw_label_overlay(painter, main_window.label_dialog)
 
             painter.end()
             logger.debug("MapViewWidget paint event completed")
@@ -146,3 +154,54 @@ class MapViewWidget(QWidget):
             logger.error("Error converting screen to world coordinates")
             logger.exception(e)
             return (0, 0)
+
+    def draw_label_overlay(self, painter: QPainter, label_dialog):
+        """Draw the training label overlay.
+
+        Args:
+            painter: QPainter instance
+            label_dialog: LabelingDialog instance with label information
+        """
+        try:
+            if not label_dialog or not hasattr(self.parent(), 'training_mode') or not self.parent().training_mode:
+                return
+
+            # Get all label masks
+            label_masks = label_dialog.get_label_masks()
+            if not label_masks:
+                return
+
+            for label_name, mask in label_masks.items():
+                if mask is None:
+                    continue
+
+                # Get label color
+                label = label_dialog.labels[label_name]
+                color = label.color
+
+                # Create semi-transparent color for overlay
+                overlay_color = QColor(color.red(), color.green(), color.blue(), 128)
+
+                # Create image from mask
+                height, width = mask.shape
+                mask_image = QImage(width, height, QImage.Format.Format_ARGB32)
+                mask_image.fill(Qt.GlobalColor.transparent)
+
+                # Draw mask
+                mask_painter = QPainter(mask_image)
+                mask_painter.setPen(Qt.PenStyle.NoPen)
+                mask_painter.setBrush(overlay_color)
+
+                # Convert boolean mask to coordinates
+                y_coords, x_coords = np.where(mask)
+                for x, y in zip(x_coords, y_coords):
+                    mask_painter.drawRect(x, y, 1, 1)
+
+                mask_painter.end()
+
+                # Draw the mask image onto the map
+                painter.drawImage(0, 0, mask_image)
+
+        except Exception as e:
+            logger.error("Error drawing label overlay")
+            logger.exception(e)
