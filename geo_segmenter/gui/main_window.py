@@ -4,7 +4,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                            QPushButton, QLabel, QFileDialog, QMessageBox,
                            QDockWidget, QToolBar, QStatusBar, QComboBox,
-                           QProgressBar, QMenu, QMenuBar, QStyle)
+                           QProgressBar, QMenu, QMenuBar, QStyle, QApplication)
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction, QIcon, QActionGroup
 
@@ -19,7 +19,9 @@ from .map_canvas import MapCanvas
 from .layer_manager import LayerManager, RasterLayer
 from .. import config
 from .dialogs.label_dialog import LabelingDialog
+from .dialogs.training_dialog import  TrainingDialog
 from .paint_tool import TrainingPaintTool
+from ..models.random_forest import RandomForestModel
 
 logger = setup_logger(__name__)
 
@@ -560,16 +562,143 @@ class MainWindow(QMainWindow):
     def train_model(self):
         """Train the selected model."""
         try:
-            if not self.layer_manager.get_training_data():
+            # Get active layer
+            active_layer = self.layer_manager.get_active_layer()
+            if not active_layer or not isinstance(active_layer, RasterLayer):
+                QMessageBox.warning(self, "Warning",
+                                  "Please select a raster layer for training")
+                return
+
+            # Get training data
+            label_masks = self.label_dialog.get_label_masks()
+            if not label_masks:
                 QMessageBox.warning(self, "Warning",
                                   "Please create training samples first")
                 return
 
-            # TODO: Implement model training
-            logger.info("Started model training")
+            # Show training dialog early
+            dialog = TrainingDialog("Random Forest", self)
+            dialog.show()
+
+            # Update progress
+            dialog.progress_label.setText("Loading image data...")
+            QApplication.processEvents()
+
+            # Load image data
+            with rasterio.open(active_layer.path) as src:
+                image_data = src.read()
+                # Move bands to last dimension for processing
+                image_data = np.moveaxis(image_data, 0, -1)
+
+            # Initialize model
+            dialog.progress_label.setText("Initializing model...")
+            QApplication.processEvents()
+
+            model = RandomForestModel()
+
+            # Add feature extractors
+            if image_data.shape[-1] >= 3:
+                dialog.progress_label.setText("Setting up spectral features...")
+                QApplication.processEvents()
+
+                from ..models.features.spectral import SpectralFeatureExtractor
+                spectral = SpectralFeatureExtractor()
+                band_map = {'red': 0, 'green': 1, 'blue': 2}
+                if image_data.shape[-1] > 3:
+                    band_map['nir'] = 3
+                spectral.set_band_map(band_map)
+                model.add_feature_extractor('spectral', spectral)
+
+            # Add texture features
+            dialog.progress_label.setText("Setting up texture features...")
+            QApplication.processEvents()
+
+            from ..models.features.texture import TextureFeatureExtractor
+            texture = TextureFeatureExtractor()
+            model.add_feature_extractor('texture', texture)
+
+            try:
+                dialog.progress_label.setText("Training model...")
+                dialog.progress_bar.setValue(0)
+                QApplication.processEvents()
+
+                # Train model
+                metrics = model.train(
+                    image_data,
+                    label_masks,
+                    validation_split=0.2
+                )
+
+                dialog.progress_bar.setValue(100)
+
+                # Update dialog with results
+                if 'feature_importances' in metrics:
+                    dialog.update_feature_importance(metrics['feature_importances'])
+
+                if 'training_score' in metrics:
+                    dialog.update_progress(
+                        1, 1,  # RF trains in one step
+                        {
+                            'train_accuracy': [metrics['training_score']],
+                            'val_accuracy': [metrics.get('validation_score', 0)]
+                        }
+                    )
+
+                # Store model for later use
+                self.current_model = model
+                self.current_model_metrics = metrics
+
+                dialog.training_finished(True)
+
+                # Show results
+                QMessageBox.information(
+                    self,
+                    "Training Complete",
+                    f"Training accuracy: {metrics['training_score']:.2%}\n" +
+                    (f"Validation accuracy: {metrics['validation_score']:.2%}"
+                     if 'validation_score' in metrics else "")
+                )
+
+            except Exception as e:
+                dialog.show_error(str(e))
+                raise
 
         except Exception as e:
             logger.error("Error training model")
+            logger.exception(e)
+            QMessageBox.critical(self, "Error", str(e))
+
+    def run_segmentation(self):
+        """Run segmentation using the trained model."""
+        try:
+            if not hasattr(self, 'current_model') or not self.current_model:
+                QMessageBox.warning(self, "Warning",
+                                  "Please train a model first")
+                return
+
+            # Get active layer
+            active_layer = self.layer_manager.get_active_layer()
+            if not active_layer or not isinstance(active_layer, RasterLayer):
+                QMessageBox.warning(self, "Warning",
+                                  "Please select a raster layer for segmentation")
+                return
+
+            # Load image data
+            with rasterio.open(active_layer.path) as src:
+                image_data = src.read()
+                image_data = np.moveaxis(image_data, 0, -1)
+
+            # Run prediction
+            prediction = self.current_model.predict(image_data)
+
+            # Create a new layer for the results
+            # TODO: Implement visualization of segmentation results
+
+            QMessageBox.information(self, "Segmentation Complete",
+                                  "Segmentation completed successfully!")
+
+        except Exception as e:
+            logger.error("Error running segmentation")
             logger.exception(e)
             QMessageBox.critical(self, "Error", str(e))
 
@@ -661,7 +790,8 @@ class MainWindow(QMainWindow):
                     self.paint_tool.set_image_shape(shape)
                     self.paint_tool.set_transform(transform)
 
-                    # Add paint tool to map canvas if not already added
+                    # Set up paint tool
+                    self.paint_tool.set_brush_size(self.label_dialog.brush_size)
                     self.paint_tool.setParent(self.map_canvas.map_view)
                     self.paint_tool.show()
                 else:

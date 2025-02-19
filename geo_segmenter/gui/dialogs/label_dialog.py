@@ -152,11 +152,15 @@ class LabelingDialog(QDialog):
         """Decrease brush size."""
         self.brush_size = max(1, self.brush_size - 2)
         self.brush_label.setText(str(self.brush_size))
+        if hasattr(self.parent(), 'paint_tool'):
+            self.parent().paint_tool.set_brush_size(self.brush_size)
 
     def increase_brush(self):
         """Increase brush size."""
         self.brush_size = min(50, self.brush_size + 2)
         self.brush_label.setText(str(self.brush_size))
+        if hasattr(self.parent(), 'paint_tool'):
+            self.parent().paint_tool.set_brush_size(self.brush_size)
 
     def initialize_masks(self, shape: tuple):
         """Initialize masks for all labels.
