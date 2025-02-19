@@ -367,6 +367,10 @@ class TrainingPaintTool(QWidget):
         self.update()
         self.selection_changed.emit()
 
+        # Update map view to show overlay
+        if self.parent():
+            self.parent().update()
+
     def get_image_coordinates(self, pos: QPoint) -> Optional[QPoint]:
         """Convert screen coordinates to image coordinates."""
         if self.image_shape is None or self.transform is None:
