@@ -12,6 +12,8 @@ import rasterio
 
 from ..data.layer import Layer, RasterLayer, VectorLayer, LidarLayer, SegmentationLayer
 from ..utils.logger import setup_logger
+from ..gui.dialogs.stretch_dialog import StretchDialog
+from ..gui.dialogs.band_combo_dialog import BandComboDialog
 
 logger = setup_logger(__name__)
 
@@ -175,6 +177,9 @@ class LayerManager(QWidget):
             # Store layer reference
             item.setData(0, Qt.ItemDataRole.UserRole, layer)
 
+            # Connect visibility signal
+            self.layer_tree.itemChanged.connect(self.on_item_changed)
+
             # Add to tree
             self.layer_tree.addTopLevelItem(item)
 
@@ -298,6 +303,26 @@ class LayerManager(QWidget):
             logger.error("Error handling selection change")
             logger.exception(e)
 
+    def on_item_changed(self, item: QTreeWidgetItem, column: int):
+        """Handle item changes (like visibility checkbox).
+
+        Args:
+            item: Changed tree item
+            column: Changed column
+        """
+        try:
+            if column == 0:  # Visibility checkbox
+                layer = item.data(0, Qt.ItemDataRole.UserRole)
+                if layer:
+                    layer.visible = item.checkState(0) == Qt.CheckState.Checked
+                    # Update map display
+                    if hasattr(self.parent(), 'map_canvas'):
+                        self.parent().map_canvas.update()
+
+        except Exception as e:
+            logger.error("Error handling item change")
+            logger.exception(e)
+
     def show_context_menu(self, position):
         """Show context menu for layer items.
 
@@ -385,8 +410,22 @@ class LayerManager(QWidget):
         """
         try:
             if hasattr(self.parent(), 'map_canvas'):
-                self.parent().map_canvas.zoom_to_layer(layer)
+                extent = layer.extent()
+                if extent:
+                    # Get layer extent with padding
+                    x_min, y_min, x_max, y_max = extent
+                    x_pad = (x_max - x_min) * 0.05
+                    y_pad = (y_max - y_min) * 0.05
 
+                    padded_extent = (
+                        x_min - x_pad,
+                        y_min - y_pad,
+                        x_max + x_pad,
+                        y_max + y_pad
+                    )
+
+                    self.parent().map_canvas.zoom_to_extent(padded_extent)
+                    logger.debug(f"Zoomed to layer: {layer.name}")
         except Exception as e:
             logger.error("Error zooming to layer")
             logger.exception(e)
@@ -407,6 +446,19 @@ class LayerManager(QWidget):
         bands_action = QAction("Band Combination...", self)
         bands_action.triggered.connect(lambda: self.show_bands_dialog(layer))
         menu.addAction(bands_action)
+
+    def show_stretch_dialog(self, layer: RasterLayer):
+        """Show stretch parameters dialog.
+
+        Args:
+            layer: Raster layer
+        """
+        try:
+            dialog = StretchDialog(layer, self)
+            dialog.exec()
+        except Exception as e:
+            logger.error("Error showing stretch dialog")
+            logger.exception(e)
 
     def add_vector_actions(self, menu: QMenu, layer: VectorLayer):
         """Add vector-specific context menu actions.
@@ -452,55 +504,17 @@ class LayerManager(QWidget):
         return {}
 
     def show_bands_dialog(self, layer: RasterLayer):
-        """Show dialog for band selection.
+        """Show band combination dialog.
 
         Args:
             layer: Raster layer
         """
         try:
-            with rasterio.open(layer.path) as src:
-                band_count = src.count
-
-                dialog = QDialog(self)
-                dialog.setWindowTitle("Band Selection")
-                layout = QVBoxLayout(dialog)
-
-                # Band selection
-                form = QFormLayout()
-
-                # RGB band selection
-                rgb_bands = []
-                for band_name in ["Red", "Green", "Blue"]:
-                    combo = QComboBox()
-                    combo.addItems([f"Band {i+1}" for i in range(band_count)])
-                    form.addRow(f"{band_name} Band:", combo)
-                    rgb_bands.append(combo)
-
-                # Set current values
-                for i, combo in enumerate(rgb_bands):
-                    combo.setCurrentIndex(layer.band_indices[i] - 1)
-
-                layout.addLayout(form)
-
-                # Buttons
-                button_box = QHBoxLayout()
-
-                apply_btn = QPushButton("Apply")
-                apply_btn.clicked.connect(lambda: self.apply_band_selection(layer, rgb_bands))
-                button_box.addWidget(apply_btn)
-
-                cancel_btn = QPushButton("Cancel")
-                cancel_btn.clicked.connect(dialog.reject)
-                button_box.addWidget(cancel_btn)
-
-                layout.addLayout(button_box)
-
-                dialog.exec()
-
+            dialog = BandComboDialog(layer, self)
+            dialog.exec()
         except Exception as e:
-            logger.error("Error showing band dialog")
+            logger.error("Error showing bands dialog")
             logger.exception(e)
-            QMessageBox.critical(self, "Error", str(e))
 
     def apply_band_selection(self, layer: RasterLayer, band_combos: List[QComboBox]):
         """Apply band selection to layer.

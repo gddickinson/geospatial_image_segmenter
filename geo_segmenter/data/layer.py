@@ -115,6 +115,7 @@ class RasterLayer(Layer):
         self.path = path
         self.info = info
         self.band_indices = [1, 2, 3]  # Default to first three bands for RGB
+        self.stretch_params = None
 
         # Initialize from info
         self.crs = info['crs']
@@ -126,7 +127,7 @@ class RasterLayer(Layer):
         )
         logger.debug(f"Initialized RasterLayer {name} with extent: {self._extent}")
 
-    def _prepare_display_data(self, data: np.ndarray) -> np.ndarray:
+    def prepare_display_data(self, data: np.ndarray) -> np.ndarray:
         """Prepare raster data for display.
 
         Args:
@@ -145,20 +146,68 @@ class RasterLayer(Layer):
                 # Replicate single band to RGB
                 rgb = np.repeat(data[:1], 3, axis=0)
 
-            # Normalize each band to 0-255 range using percentile stretching
-            normalized = np.zeros_like(rgb, dtype=np.uint8)
-            for i in range(3):
-                band = rgb[i].astype(float)
-                # Use 2nd and 98th percentiles for better contrast
-                p2, p98 = np.percentile(band[~np.isnan(band)], (2, 98))
-                if p98 > p2:
-                    normalized[i] = np.clip((band - p2) * 255 / (p98 - p2), 0, 255)
+            # Apply stretch
+            if self.stretch_params:
+                stretch_type = self.stretch_params['type']
+
+                if stretch_type.startswith("Linear"):
+                    # Get percentiles if needed
+                    if "2%" in stretch_type:
+                        p_min, p_max = 2, 98
+                    elif "5%" in stretch_type:
+                        p_min, p_max = 5, 95
+                    else:
+                        p_min, p_max = 0, 100
+
+                    normalized = np.zeros_like(rgb, dtype=np.uint8)
+                    for i in range(3):
+                        band = rgb[i].astype(float)
+                        if p_min == 0 and p_max == 100:
+                            min_val = self.stretch_params['min']
+                            max_val = self.stretch_params['max']
+                        else:
+                            min_val, max_val = np.nanpercentile(
+                                band[~np.isnan(band)],
+                                (p_min, p_max)
+                            )
+                        if max_val > min_val:
+                            normalized[i] = np.clip(
+                                (band - min_val) * 255 / (max_val - min_val),
+                                0, 255
+                            )
+
+                elif stretch_type == "Standard Deviation":
+                    normalized = np.zeros_like(rgb, dtype=np.uint8)
+                    for i in range(3):
+                        band = rgb[i].astype(float)
+                        valid = ~np.isnan(band)
+                        mean = np.mean(band[valid])
+                        std = np.std(band[valid])
+                        min_val = mean - 2 * std
+                        max_val = mean + 2 * std
+                        normalized[i] = np.clip(
+                            (band - min_val) * 255 / (max_val - min_val),
+                            0, 255
+                        )
+
+            else:
+                # Default normalization
+                normalized = np.zeros_like(rgb, dtype=np.uint8)
+                for i in range(3):
+                    band = rgb[i].astype(float)
+                    min_val = np.nanmin(band)
+                    max_val = np.nanmax(band)
+                    if max_val > min_val:
+                        normalized[i] = np.clip(
+                            (band - min_val) * 255 / (max_val - min_val),
+                            0, 255
+                        )
 
             # Transpose to height, width, channels and ensure contiguous memory
             return np.ascontiguousarray(normalized.transpose(1, 2, 0))
 
         except Exception as e:
-            logger.error(f"Error preparing display data: {str(e)}")
+            logger.error("Error preparing display data")
             logger.exception(e)
             raise
 
@@ -186,7 +235,7 @@ class RasterLayer(Layer):
                 logger.debug(f"Read raster data: shape={data.shape}, dtype={data.dtype}")
 
                 # Convert to RGB display format
-                display_data = self._prepare_display_data(data)
+                display_data = self.prepare_display_data(data)
                 logger.debug(f"Prepared display data: shape={display_data.shape}")
 
                 # Create QImage

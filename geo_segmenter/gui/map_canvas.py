@@ -141,39 +141,34 @@ class MapCanvas(QWidget):
             logger.error("Error zooming to layer")
             logger.exception(e)
 
-    def zoom_to_extent(self, extent: tuple) -> None:
-        """Zoom the map to show a specific extent.
+    def zoom_to_extent(self, extent: tuple):
+        """Zoom to a specific extent.
 
         Args:
-            extent: (min_lon, min_lat, max_lon, max_lat)
+            extent: (min_x, min_y, max_x, max_y)
         """
         try:
-            min_lon, min_lat, max_lon, max_lat = extent
+            self.viewport_bounds = extent
 
-            # Calculate center
-            center_lon = (min_lon + max_lon) / 2
-            center_lat = (min_lat + max_lat) / 2
-            self.center = (center_lat, center_lon)
+            # Calculate scale
+            world_width = extent[2] - extent[0]
+            world_height = extent[3] - extent[1]
+            view_width = self.width()
+            view_height = self.height()
 
-            # Calculate appropriate zoom level
-            width = abs(max_lon - min_lon)
-            height = abs(max_lat - min_lat)
-            max_dimension = max(width, height)
+            if view_width > 0 and view_height > 0:
+                x_scale = world_width / view_width
+                y_scale = world_height / view_height
+                self.scale = max(x_scale, y_scale)
 
-            # Approximate zoom level
-            zoom = int(np.log2(360 / max_dimension))
-            self.zoom = max(0, min(zoom, 18))
-
-            self.scale = calculate_scale(self.center[0], self.zoom)
-            self.update_scale_label()
-            self.update()
-
-            logger.debug(f"Zoomed to extent: {extent}")
+                # Update display
+                self.update()
+                self.update_scale_label()
+                logger.debug(f"Zoomed to extent: {extent}")
 
         except Exception as e:
             logger.error("Error zooming to extent")
             logger.exception(e)
-            raise
 
     def update_scale_label(self):
         """Update the scale display label."""
