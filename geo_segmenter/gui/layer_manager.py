@@ -48,6 +48,7 @@ class LayerManager(QWidget):
         self.layer_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.layer_tree.customContextMenuRequested.connect(self.show_context_menu)
         self.layer_tree.itemSelectionChanged.connect(self.on_selection_changed)
+        # Remove the old itemChanged connection if it exists
         layout.addWidget(self.layer_tree)
 
         # Buttons
@@ -159,7 +160,7 @@ class LayerManager(QWidget):
             # Create tree item
             item = QTreeWidgetItem([layer.name])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.CheckState.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked if layer.visible else Qt.CheckState.Unchecked)
 
             # Add icon based on layer type
             if isinstance(layer, RasterLayer):
@@ -177,7 +178,7 @@ class LayerManager(QWidget):
             # Store layer reference
             item.setData(0, Qt.ItemDataRole.UserRole, layer)
 
-            # Connect visibility signal
+            # Connect item changed signal AFTER adding the item
             self.layer_tree.itemChanged.connect(self.on_item_changed)
 
             # Add to tree
@@ -187,6 +188,10 @@ class LayerManager(QWidget):
             self.layer_tree.setCurrentItem(item)
             self.active_layer = layer
             self.active_layer_changed.emit(layer)
+
+            # Connect layer visibility changes to update map
+            if hasattr(self.main_window, 'map_canvas'):
+                layer.visibility_changed.connect(lambda: self.main_window.map_canvas.update())
 
             # Emit signal
             self.layer_added.emit(layer)
@@ -315,9 +320,12 @@ class LayerManager(QWidget):
                 layer = item.data(0, Qt.ItemDataRole.UserRole)
                 if layer:
                     layer.visible = item.checkState(0) == Qt.CheckState.Checked
-                    # Update map display
+                    logger.debug(f"Layer {layer.name} visibility set to {layer.visible}")
+
+                    # Force map canvas update
                     if hasattr(self.parent(), 'map_canvas'):
                         self.parent().map_canvas.update()
+                        self.parent().map_canvas.map_view.update()
 
         except Exception as e:
             logger.error("Error handling item change")

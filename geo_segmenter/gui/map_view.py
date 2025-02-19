@@ -45,14 +45,17 @@ class MapViewWidget(QWidget):
                 if layers:  # Only proceed if there are layers
                     for layer in layers:
                         try:
-                            logger.debug(f"Starting render of layer: {layer.name}")
-                            layer.render(painter, canvas)
-                            logger.debug(f"Completed render of layer: {layer.name}")
+                            if layer.visible:  # Only render if layer is visible
+                                logger.debug(f"Starting render of layer: {layer.name} (visible={layer.visible})")
+                                layer.render(painter, canvas)
+                                logger.debug(f"Completed render of layer: {layer.name}")
+                            else:
+                                logger.debug(f"Skipping invisible layer: {layer.name}")
                         except Exception as e:
                             logger.error(f"Error rendering layer {layer.name}: {str(e)}")
                             logger.exception(e)
-            else:
-                logger.debug("No layers to draw")
+                else:
+                    logger.debug("No layers to draw")
 
             # Draw label overlay if in training mode
             if hasattr(canvas, 'training_mode') and canvas.training_mode:
