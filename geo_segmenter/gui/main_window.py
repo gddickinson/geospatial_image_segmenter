@@ -4,7 +4,8 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                            QPushButton, QLabel, QFileDialog, QMessageBox,
                            QDockWidget, QToolBar, QStatusBar, QComboBox,
-                           QProgressBar, QMenu, QMenuBar, QStyle, QApplication, QProgressDialog)
+                           QProgressBar, QMenu, QMenuBar, QStyle, QApplication, QProgressDialog,
+                           QFormLayout, QSpinBox, QDoubleSpinBox)
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction, QIcon, QActionGroup
 
@@ -22,6 +23,7 @@ from .dialogs.label_dialog import LabelingDialog
 from .dialogs.training_dialog import  TrainingDialog
 from .paint_tool import TrainingPaintTool
 from ..models.random_forest import RandomForestModel
+from ..models.cnn import CNNModel
 
 logger = setup_logger(__name__)
 
@@ -337,9 +339,19 @@ class MainWindow(QMainWindow):
 
         self.model_combo = QComboBox()
         self.model_combo.addItems(["Random Forest", "CNN"])
+        self.model_combo.currentTextChanged.connect(self.on_model_changed)
         model_layout.addWidget(self.model_combo)
 
         analysis_layout.addWidget(model_group)
+
+        # Model parameters group
+        self.params_group = QWidget()
+        params_layout = QFormLayout(self.params_group)
+        self.params_group.setLayout(params_layout)
+        analysis_layout.addWidget(self.params_group)
+
+        # Update parameters for current model
+        self.update_model_parameters()
 
         # Training controls
         train_btn = QPushButton("Train Model")
@@ -576,13 +588,14 @@ class MainWindow(QMainWindow):
                                   "Please create training samples first")
                 return
 
-            # Show training dialog early
-            dialog = TrainingDialog("Random Forest", self)
-            dialog.show()
+            logger.debug(f"Got {len(label_masks)} label masks")
+            for name, mask in label_masks.items():
+                if mask is not None:
+                    logger.debug(f"Label '{name}' has {np.sum(mask)} pixels")
 
-            # Update progress
-            dialog.progress_label.setText("Loading image data...")
-            QApplication.processEvents()
+            # Filter out empty masks
+            label_masks = {name: mask for name, mask in label_masks.items()
+                         if mask is not None and np.any(mask)}
 
             # Load image data
             with rasterio.open(active_layer.path) as src:
@@ -590,19 +603,26 @@ class MainWindow(QMainWindow):
                 # Move bands to last dimension for processing
                 image_data = np.moveaxis(image_data, 0, -1)
 
-            # Initialize model
-            dialog.progress_label.setText("Initializing model...")
-            QApplication.processEvents()
-
-            model = RandomForestModel()
+            # Initialize model based on selection
+            model_type = self.model_combo.currentText()
+            if model_type == "Random Forest":
+                model = RandomForestModel(
+                    n_estimators=self.rf_n_estimators.value(),
+                    max_depth=self.rf_max_depth.value()
+                )
+            else:  # CNN
+                model = CNNModel(
+                    patch_size=self.cnn_patch_size.value(),
+                    batch_size=self.cnn_batch_size.value(),
+                    learning_rate=self.cnn_learning_rate.value(),
+                    n_epochs=self.cnn_epochs.value()
+                )
 
             # Add feature extractors
-            if image_data.shape[-1] >= 3:
-                dialog.progress_label.setText("Setting up spectral features...")
-                QApplication.processEvents()
-
+            if image_data.shape[-1] >= 3:  # If we have enough bands
                 from ..models.features.spectral import SpectralFeatureExtractor
                 spectral = SpectralFeatureExtractor()
+                # Set band mapping based on data
                 band_map = {'red': 0, 'green': 1, 'blue': 2}
                 if image_data.shape[-1] > 3:
                     band_map['nir'] = 3
@@ -610,18 +630,15 @@ class MainWindow(QMainWindow):
                 model.add_feature_extractor('spectral', spectral)
 
             # Add texture features
-            dialog.progress_label.setText("Setting up texture features...")
-            QApplication.processEvents()
-
             from ..models.features.texture import TextureFeatureExtractor
             texture = TextureFeatureExtractor()
             model.add_feature_extractor('texture', texture)
 
-            try:
-                dialog.progress_label.setText("Training model...")
-                dialog.progress_bar.setValue(0)
-                QApplication.processEvents()
+            # Show training dialog
+            dialog = TrainingDialog(model_type, self)
+            dialog.show()
 
+            try:
                 # Train model
                 metrics = model.train(
                     image_data,
@@ -629,20 +646,22 @@ class MainWindow(QMainWindow):
                     validation_split=0.2
                 )
 
-                dialog.progress_bar.setValue(100)
-
                 # Update dialog with results
-                if 'feature_importances' in metrics:
-                    dialog.update_feature_importance(metrics['feature_importances'])
+                if model_type == "Random Forest":
+                    if 'feature_importances' in metrics:
+                        dialog.update_feature_importance(metrics['feature_importances'])
 
-                if 'training_score' in metrics:
-                    dialog.update_progress(
-                        1, 1,  # RF trains in one step
-                        {
-                            'train_accuracy': [metrics['training_score']],
-                            'val_accuracy': [metrics.get('validation_score', 0)]
-                        }
-                    )
+                    if 'training_score' in metrics:
+                        dialog.update_progress(
+                            1, 1,  # RF trains in one step
+                            {
+                                'train_accuracy': [metrics['training_score']],
+                                'val_accuracy': [metrics.get('validation_score', 0)]
+                            }
+                        )
+                else:  # CNN
+                    # CNN training updates progress during training via callbacks
+                    pass
 
                 # Store model for later use
                 self.current_model = model
@@ -651,13 +670,15 @@ class MainWindow(QMainWindow):
                 dialog.training_finished(True)
 
                 # Show results
-                QMessageBox.information(
-                    self,
-                    "Training Complete",
-                    f"Training accuracy: {metrics['training_score']:.2%}\n" +
-                    (f"Validation accuracy: {metrics['validation_score']:.2%}"
-                     if 'validation_score' in metrics else "")
-                )
+                if model_type == "Random Forest":
+                    msg = (f"Training accuracy: {metrics['training_score']:.2%}\n" +
+                          (f"Validation accuracy: {metrics['validation_score']:.2%}"
+                           if 'validation_score' in metrics else ""))
+                else:
+                    msg = (f"Final validation accuracy: {metrics['val_accuracy'][-1]:.2%}\n" +
+                          f"Training loss: {metrics['train_loss'][-1]:.4f}")
+
+                QMessageBox.information(self, "Training Complete", msg)
 
             except Exception as e:
                 dialog.show_error(str(e))
@@ -847,3 +868,53 @@ class MainWindow(QMainWindow):
             dict: Dictionary mapping label names to boolean masks
         """
         return self.label_dialog.get_label_masks()
+
+    def on_model_changed(self, model_name: str):
+        """Handle model selection change."""
+        self.update_model_parameters()
+
+    def update_model_parameters(self):
+        """Update parameter widgets based on selected model."""
+        # Clear existing parameters
+        layout = self.params_group.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Add parameters based on selected model
+        if self.model_combo.currentText() == "Random Forest":
+            self.rf_n_estimators = QSpinBox()
+            self.rf_n_estimators.setRange(10, 1000)
+            self.rf_n_estimators.setValue(100)
+            self.rf_n_estimators.setSingleStep(10)
+            layout.addRow("Number of Trees:", self.rf_n_estimators)
+
+            self.rf_max_depth = QSpinBox()
+            self.rf_max_depth.setRange(1, 100)
+            self.rf_max_depth.setValue(10)
+            layout.addRow("Max Depth:", self.rf_max_depth)
+
+        else:  # CNN
+            self.cnn_patch_size = QSpinBox()
+            self.cnn_patch_size.setRange(32, 512)
+            self.cnn_patch_size.setValue(256)
+            self.cnn_patch_size.setSingleStep(32)
+            layout.addRow("Patch Size:", self.cnn_patch_size)
+
+            self.cnn_batch_size = QSpinBox()
+            self.cnn_batch_size.setRange(1, 32)
+            self.cnn_batch_size.setValue(4)
+            layout.addRow("Batch Size:", self.cnn_batch_size)
+
+            self.cnn_epochs = QSpinBox()
+            self.cnn_epochs.setRange(1, 200)
+            self.cnn_epochs.setValue(50)
+            layout.addRow("Epochs:", self.cnn_epochs)
+
+            self.cnn_learning_rate = QDoubleSpinBox()
+            self.cnn_learning_rate.setRange(0.0001, 0.1)
+            self.cnn_learning_rate.setValue(0.001)
+            self.cnn_learning_rate.setDecimals(4)
+            self.cnn_learning_rate.setSingleStep(0.0001)
+            layout.addRow("Learning Rate:", self.cnn_learning_rate)
