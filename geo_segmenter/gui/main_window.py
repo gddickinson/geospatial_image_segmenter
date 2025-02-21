@@ -5,25 +5,34 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                            QPushButton, QLabel, QFileDialog, QMessageBox,
                            QDockWidget, QToolBar, QStatusBar, QComboBox,
                            QProgressBar, QMenu, QMenuBar, QStyle, QApplication, QProgressDialog,
-                           QFormLayout, QSpinBox, QDoubleSpinBox)
-from PyQt6.QtCore import Qt, QSettings
-from PyQt6.QtGui import QAction, QIcon, QActionGroup
+                           QFormLayout, QSpinBox, QDoubleSpinBox, QTabWidget, QCheckBox)
+from PyQt6.QtCore import Qt, QSettings, QTimer
+from PyQt6.QtGui import QAction, QIcon, QActionGroup, QImage, QPainter
 
+import os
+from datetime import datetime
 import rasterio
+import rasterio.transform
 import geopandas as gpd
+import platform
+import serial
+import math
+
 from typing import Optional, List, Dict
 
 from ..utils.logger import setup_logger
 from ..utils.geo_utils import get_raster_info
 from ..utils import lidar_utils
 from .map_canvas import MapCanvas
-from .layer_manager import LayerManager, RasterLayer, SegmentationLayer
+from .layer_manager import LayerManager, RasterLayer, SegmentationLayer, TrainingLabelsLayer
 from .. import config
 from .dialogs.label_dialog import LabelingDialog
 from .dialogs.training_dialog import  TrainingDialog
 from .paint_tool import TrainingPaintTool
 from ..models.random_forest import RandomForestModel
 from ..models.cnn import CNNModel
+from ..gui.map_widget import MapWidget
+from ..data.providers.gps_providers import SerialGPSProvider, IPLocationProvider
 
 logger = setup_logger(__name__)
 
@@ -40,10 +49,17 @@ class MainWindow(QMainWindow):
         self.current_project = None
         self.settings = QSettings('GeoSegmenter', 'GeoSegmentationTool')
 
+        self.auto_following = False
+
         try:
             self.setup_ui()
             self.restore_settings()
+
+            self.check_layer_references()
+
             logger.info("MainWindow initialized successfully")
+
+
         except Exception as e:
             logger.error(f"Error initializing MainWindow: {str(e)}")
             logger.exception(e)
@@ -62,17 +78,24 @@ class MainWindow(QMainWindow):
             self.statusBar = QStatusBar()
             self.setStatusBar(self.statusBar)
 
-            # Set up central widget (map canvas)
+            # Create main central widget and layout
+            main_widget = QWidget()
+            self.setCentralWidget(main_widget)
+            main_layout = QVBoxLayout(main_widget)
+
+            # Create map canvas
             self.map_canvas = MapCanvas()
-            self.setCentralWidget(self.map_canvas)
+            main_layout.addWidget(self.map_canvas)
+
+            # Create tab widget
+            self.tab_widget = QTabWidget()
+            main_layout.addWidget(self.tab_widget)
 
             # Set up layer manager dock
             self.setup_layer_manager()
 
             # Set up analysis dock
             self.setup_analysis_panel()
-
-            logger.debug("UI setup completed")
 
             # Create labeling dialog
             self.label_dialog = LabelingDialog(self)
@@ -83,18 +106,10 @@ class MainWindow(QMainWindow):
             self.paint_tool.label_dialog = self.label_dialog
             self.paint_tool.selection_changed.connect(self.update_label_overlay)
 
-            # Add Label Management to View menu
-            view_label_manager = QAction("Label Manager", self)
-            view_label_manager.setCheckable(True)
-            view_label_manager.setChecked(False)
-            view_label_manager.triggered.connect(
-                lambda checked: self.label_dialog.setVisible(checked))
-            self.view_menu.addAction(view_label_manager)
-
             # Store view menu as attribute in setup_menu_bar
             self.view_menu = self.menuBar.addMenu("&View")
 
-            # Add label manager to view menu
+            # Add Label Management to View menu
             view_label_manager = QAction("Label Manager", self)
             view_label_manager.setCheckable(True)
             view_label_manager.setChecked(False)
@@ -109,10 +124,130 @@ class MainWindow(QMainWindow):
             self.training_action.triggered.connect(self.toggle_training_mode)
             self.toolbar.addAction(self.training_action)
 
+            # Add Map View tab
+            self.setup_map_tab()
+
+            # Initialize training layer (after first layer is loaded)
+            active_layer = self.layer_manager.get_active_layer()
+            if active_layer and isinstance(active_layer, RasterLayer):
+                with rasterio.open(active_layer.path) as src:
+                    shape = src.shape
+                    extent = (src.bounds.left, src.bounds.bottom,
+                             src.bounds.right, src.bounds.top)
+
+                self.training_layer = TrainingLabelsLayer("Training Labels", shape)
+                self.training_layer.extent = extent
+
+                # Add to layer manager
+                self.layer_manager.add_layer(self.training_layer)
+
+                # Connect label dialog changes to update layer
+                self.label_dialog.labels_changed.connect(self.update_training_layer)
+
+
+            # Add this at the end to connect the visibility signal
+            self.connect_visibility_signals()
+
+            logger.debug("UI setup completed")
+
         except Exception as e:
             logger.error("Error setting up UI")
             logger.exception(e)
             raise
+
+    def connect_visibility_signals(self):
+        """Connect to layer visibility signals for direct UI updates."""
+        try:
+            # Get layer manager
+            if hasattr(self, 'layer_manager') and hasattr(self.layer_manager, 'layer_tree'):
+                # Connect to itemChanged signal
+                self.layer_manager.layer_tree.itemChanged.connect(self.force_display_update)
+                logger.debug("Connected to layer tree itemChanged signal")
+        except Exception as e:
+            logger.error(f"Error connecting visibility signals: {e}")
+
+    def force_display_update(self, item, column):
+        """Force immediate display update when layers change."""
+        try:
+            if column == 0:  # Visibility checkbox
+                layer = item.data(0, Qt.ItemDataRole.UserRole)
+                if not layer:
+                    return
+
+                # Get checkbox state
+                is_checked = item.checkState(0) == Qt.CheckState.Checked
+
+                # Update layer visibility (this will happen in the normal handler too)
+                layer._visible = is_checked
+
+                # CRITICAL: Wait a tiny bit to let normal handler run, then force update
+                def delayed_update():
+                    try:
+                        logger.debug(f"FORCING UPDATE after visibility change to {is_checked}")
+
+                        # Force map view to repaint itself
+                        if hasattr(self, 'map_canvas') and hasattr(self.map_canvas, 'map_view'):
+                            self.map_canvas.map_view.repaint()
+
+                        # Also force map canvas to repaint
+                        if hasattr(self, 'map_canvas'):
+                            self.map_canvas.repaint()
+                    except Exception as e:
+                        logger.error(f"Error in delayed update: {e}")
+
+                # Schedule updates - use multiple timers with different delays
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(10, delayed_update)  # Almost immediate
+                QTimer.singleShot(50, delayed_update)  # Short delay
+                QTimer.singleShot(200, delayed_update)  # Longer delay as fallback
+
+        except Exception as e:
+            logger.error(f"Error in force_display_update: {e}")
+
+    def check_layer_references(self):
+        """Debug function to check layer references."""
+        logger.debug("\n==== CHECKING LAYER REFERENCES ====")
+
+        # Check layers in layer manager
+        if hasattr(self, 'layer_manager'):
+            logger.debug(f"Layer manager has {len(self.layer_manager.layers)} layers")
+            for i, layer in enumerate(self.layer_manager.layers):
+                logger.debug(f"Manager layer[{i}]: {layer.name}, id={id(layer)}, visible={layer.visible}")
+
+                # Check if found in tree widget
+                found_in_tree = False
+                root = self.layer_manager.layer_tree.invisibleRootItem()
+                for j in range(root.childCount()):
+                    item = root.child(j)
+                    tree_layer = item.data(0, Qt.ItemDataRole.UserRole)
+                    if tree_layer == layer:
+                        found_in_tree = True
+                        logger.debug(f"  Found in tree at index {j}, checkState={item.checkState(0)}")
+                        break
+                if not found_in_tree:
+                    logger.debug("  NOT found in layer tree!")
+
+        # Check layers in map canvas
+        if hasattr(self, 'map_canvas'):
+            logger.debug(f"Map canvas has {len(self.map_canvas._layers)} layers")
+            for i, layer in enumerate(self.map_canvas._layers):
+                logger.debug(f"Canvas layer[{i}]: {layer.name}, id={id(layer)}, visible={layer.visible}")
+
+                # Check if found in layer manager
+                if hasattr(self, 'layer_manager'):
+                    found_in_manager = layer in self.layer_manager.layers
+                    logger.debug(f"  Found in layer manager: {found_in_manager}")
+
+                    # Check if it's the exact same object
+                    for j, mgr_layer in enumerate(self.layer_manager.layers):
+                        if mgr_layer.name == layer.name:
+                            if mgr_layer is layer:
+                                logger.debug(f"  Same object as manager layer[{j}], id={id(mgr_layer)}")
+                            else:
+                                logger.debug(f"  DIFFERENT object from manager layer[{j}], id={id(mgr_layer)} vs id={id(layer)}")
+
+        logger.debug("==== LAYER REFERENCE CHECK COMPLETE ====\n")
+
 
     def setup_menu_bar(self):
         """Set up the application menu bar."""
@@ -807,6 +942,13 @@ class MainWindow(QMainWindow):
             # Clean up resources
             self.map_canvas.cleanup()
 
+            # Clean up GPS if connected
+            if self.gps_provider:
+                self.gps_provider.close()
+
+            # Call parent closeEvent
+            super().closeEvent(event)
+
             logger.info("Application closing")
             event.accept()
 
@@ -814,6 +956,7 @@ class MainWindow(QMainWindow):
             logger.error("Error during application closure")
             logger.exception(e)
             event.accept()  # Still close even if there's an error
+
 
     def toggle_training_mode(self, enabled: bool):
         """Toggle training mode."""
@@ -832,34 +975,59 @@ class MainWindow(QMainWindow):
                     with rasterio.open(layer.path) as src:
                         shape = src.shape
                         transform = src.transform
+                        bounds = src.bounds
+                        extent = (bounds.left, bounds.bottom, bounds.right, bounds.top)
+                        logger.debug(f"Creating training layer with shape {shape} and extent {extent}")
+
+                    # Create training layer if it doesn't exist
+                    if not hasattr(self, 'training_layer') or self.training_layer not in self.layer_manager.layers:
+                        self.training_layer = TrainingLabelsLayer("Training Labels", shape)
+                        self.training_layer.extent = extent
+                        self.training_layer.set_transform(transform)  # Set transform for consistent coordinates
+                        # Add to both layer manager and map canvas
+                        self.layer_manager.add_layer(self.training_layer)
+                        self.map_canvas._layers.append(self.training_layer)
+                        logger.debug(f"Added training layer to map canvas. Total layers: {len(self.map_canvas._layers)}")
+
+                    # Setup paint tool for consistent coordinate transformation
                     self.paint_tool.set_image_shape(shape)
                     self.paint_tool.set_transform(transform)
-
-                    # Set up paint tool
-                    self.paint_tool.set_brush_size(self.label_dialog.brush_size)
+                    self.paint_tool.set_extent(extent)  # Set extent for consistent coordinates
                     self.paint_tool.setParent(self.map_canvas.map_view)
                     self.paint_tool.show()
-                else:
-                    QMessageBox.warning(self, "Warning",
-                                      "Please select a raster layer for training")
-                    self.training_action.setChecked(False)
-                    return
-            else:
-                QMessageBox.warning(self, "Warning",
-                                  "Please select a layer for training")
-                self.training_action.setChecked(False)
-                return
         else:
-            # Hide label dialog and paint tool
-            self.label_dialog.hide()
+            # Hide the paint tool when not in training mode
             if hasattr(self, 'paint_tool'):
                 self.paint_tool.hide()
-                self.paint_tool.setParent(None)
 
     def update_label_overlay(self):
-        """Update the label overlay on the map."""
-        # Force map canvas to redraw
-        self.map_canvas.update()
+        """Update the label overlay when labels change."""
+        try:
+            if hasattr(self, 'training_layer'):
+                logger.debug("Updating training layer")
+
+                # Debug log the labels
+                for name, label in self.label_dialog.labels.items():
+                    if label.mask is not None:
+                        logger.debug(f"Label {name} has {np.sum(label.mask)} pixels set")
+                    else:
+                        logger.debug(f"Label {name} has no mask")
+
+                # Update the training layer with the current labels
+                self.training_layer.update_labels(self.label_dialog.labels)
+
+                # Force map canvas update
+                self.map_canvas.update()
+
+                # Also schedule a delayed update to ensure rendering
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(50, self.map_canvas.update)
+                QTimer.singleShot(50, self.map_canvas.map_view.update)
+
+                logger.debug("Training layer updated, canvas update requested")
+        except Exception as e:
+            logger.error(f"Error updating label overlay: {e}")
+            logger.exception(e)
 
     def get_training_data(self) -> Dict[str, np.ndarray]:
         """Get training data from labels.
@@ -918,3 +1086,312 @@ class MainWindow(QMainWindow):
             self.cnn_learning_rate.setDecimals(4)
             self.cnn_learning_rate.setSingleStep(0.0001)
             layout.addRow("Learning Rate:", self.cnn_learning_rate)
+
+    def setup_map_tab(self):
+        """Set up the map view tab."""
+        map_tab = QWidget()
+        map_layout = QVBoxLayout(map_tab)
+
+        # Create map widget
+        self.map_widget = MapWidget()
+        map_layout.addWidget(self.map_widget)
+
+        # Location controls
+        controls_layout = QHBoxLayout()
+
+        # Center on location button
+        center_btn = QPushButton("Center On:")
+        controls_layout.addWidget(center_btn)
+
+        # Location source combo
+        self.location_source = QComboBox()
+        self.location_source.addItems(["GPS", "IP Location", "Raster View"])
+        controls_layout.addWidget(self.location_source)
+
+        # Center button
+        center_action = QPushButton("Go")
+        center_action.clicked.connect(self.center_on_selected)
+        controls_layout.addWidget(center_action)
+
+        # Auto-follow checkbox
+        self.auto_follow = QCheckBox("Auto-follow")
+        self.auto_follow.stateChanged.connect(self.toggle_auto_follow)
+        controls_layout.addWidget(self.auto_follow)
+
+        # Add capture controls
+        # Add to map tab controls
+        capture_btn = QPushButton("Capture as Layer")
+        capture_btn.clicked.connect(self.capture_map_view)
+
+        # Add to map tab layout
+        controls_layout.addWidget(capture_btn)
+
+
+        map_layout.addLayout(controls_layout)
+
+        # Add GPS controls
+        gps_layout = QHBoxLayout()
+
+        # GPS status
+        self.gps_status = QLabel("GPS: Not Connected")
+        gps_layout.addWidget(self.gps_status)
+
+        # Port selection
+        self.port_combo = QComboBox()
+        self.refresh_ports()
+        gps_layout.addWidget(QLabel("Port:"))
+        gps_layout.addWidget(self.port_combo)
+
+        # Refresh ports button
+        refresh_btn = QPushButton("Refresh Ports")
+        refresh_btn.clicked.connect(self.refresh_ports)
+        gps_layout.addWidget(refresh_btn)
+
+        # Connect/Disconnect button
+        self.connect_btn = QPushButton("Connect GPS")
+        self.connect_btn.clicked.connect(self.toggle_gps)
+        gps_layout.addWidget(self.connect_btn)
+
+        map_layout.addLayout(gps_layout)
+
+        # Add tab
+        self.tab_widget.addTab(map_tab, "Map View")
+
+        # Initialize providers
+        self.gps_provider = None
+        self.ip_provider = IPLocationProvider()
+
+        # Initialize timers
+        self.gps_timer = QTimer()
+        self.gps_timer.timeout.connect(self.update_gps)
+
+        # Track state
+        self.track_points = []
+        self.auto_following = False
+
+    def refresh_ports(self):
+        """Refresh available serial ports."""
+        self.port_combo.clear()
+
+        if platform.system() == 'Darwin':  # macOS
+            import glob
+            ports = glob.glob('/dev/tty.*')
+        elif platform.system() == 'Linux':
+            import glob
+            ports = glob.glob('/dev/tty[A-Za-z]*')
+        else:  # Windows
+            import serial.tools.list_ports
+            ports = [port.device for port in serial.tools.list_ports.comports()]
+
+        self.port_combo.addItems(ports)
+
+    def toggle_gps(self):
+        """Connect or disconnect GPS."""
+        if not self.gps_provider:
+            port = self.port_combo.currentText()
+            try:
+                self.gps_provider = SerialGPSProvider(port)
+                self.connect_btn.setText("Disconnect GPS")
+                self.gps_status.setText("GPS: Connected")
+                self.gps_timer.start(1000)  # Update every second
+            except Exception as e:
+                QMessageBox.critical(self, "GPS Error", f"Failed to connect: {str(e)}")
+        else:
+            self.gps_provider.close()
+            self.gps_provider = None
+            self.connect_btn.setText("Connect GPS")
+            self.gps_status.setText("GPS: Not Connected")
+            self.gps_timer.stop()
+
+    def update_gps(self):
+        """Update GPS data and map display."""
+        if self.gps_provider:
+            try:
+                data = self.gps_provider.get_location()
+                if data and data.get('latitude') and data.get('longitude'):
+                    # Update track
+                    self.track_points.append((data['latitude'], data['longitude']))
+                    if len(self.track_points) > 1000:  # Keep last 1000 points
+                        self.track_points.pop(0)
+
+                    # Update map
+                    self.map_widget.update_track(self.track_points)
+                    self.map_widget.set_center(data['latitude'], data['longitude'])
+
+                    # Update status
+                    if data.get('satellites'):
+                        self.gps_status.setText(f"GPS: {data['satellites']} satellites")
+
+            except Exception as e:
+                print(f"GPS update error: {e}")
+                self.gps_status.setText("GPS: Error")
+
+    def center_on_selected(self):
+        """Center map on selected location source."""
+        try:
+            source = self.location_source.currentText()
+
+            if source == "GPS" and hasattr(self, 'gps_provider') and self.gps_provider:
+                data = self.gps_provider.get_location()
+                if data and data.get('latitude') and data.get('longitude'):
+                    self.map_widget.set_center(data['latitude'], data['longitude'])
+
+            elif source == "IP Location":
+                if not hasattr(self, 'ip_provider'):
+                    self.ip_provider = IPLocationProvider()
+                data = self.ip_provider.get_location()
+                if data and data.get('latitude') and data.get('longitude'):
+                    self.map_widget.set_center(data['latitude'], data['longitude'])
+
+            elif source == "Raster View":
+                # Get active layer from layer manager
+                active_layer = self.layer_manager.get_active_layer()
+                if active_layer and isinstance(active_layer, RasterLayer):
+                    try:
+                        with rasterio.open(active_layer.path) as src:
+                            bounds = src.bounds
+                            center_lat = (bounds.bottom + bounds.top) / 2
+                            center_lon = (bounds.left + bounds.right) / 2
+                            self.map_widget.set_center(center_lat, center_lon)
+
+                            # Calculate zoom level to fit raster
+                            width = bounds.right - bounds.left
+                            height = bounds.top - bounds.bottom
+                            zoom = self.calculate_zoom_level(width, height)
+                            self.map_widget.zoom_level = zoom
+                            self.map_widget.update()
+                    except Exception as e:
+                        logger.error(f"Error centering on raster: {e}")
+
+        except Exception as e:
+            logger.error("Error in center_on_selected")
+            logger.exception(e)
+
+    def calculate_zoom_level(self, width: float, height: float) -> int:
+        """Calculate appropriate zoom level to fit given dimensions."""
+        try:
+            # Convert dimensions to screen pixels
+            screen_width = self.map_widget.width()
+            screen_height = self.map_widget.height()
+
+            # Calculate required scaling
+            scale_x = width / screen_width
+            scale_y = height / screen_height
+            scale = max(scale_x, scale_y)
+
+            # Convert scale to zoom level
+            zoom = int(math.log2(360 / scale))
+            return min(max(zoom, 1), 19)  # Clamp between 1 and 19
+
+        except Exception as e:
+            logger.error("Error calculating zoom level")
+            logger.exception(e)
+            return 15  # Return default zoom level if calculation fails
+
+    def toggle_auto_follow(self, state):
+        """Toggle auto-following of selected location source."""
+        try:
+            self.auto_following = state == Qt.CheckState.Checked
+
+            # If enabled, immediately center on current location
+            if self.auto_following:
+                self.center_on_selected()
+
+        except Exception as e:
+            logger.error("Error in toggle_auto_follow")
+            logger.exception(e)
+
+
+    def capture_map_view(self):
+        """Capture current map view as a georeferenced layer."""
+        try:
+            # Get current map view bounds
+            center_lat = self.map_widget.center_lat
+            center_lon = self.map_widget.center_lon
+            zoom = self.map_widget.zoom_level
+
+            # Calculate viewport bounds in world coordinates
+            n = 2.0 ** zoom
+            lat_rad = math.radians(center_lat)
+            x = ((center_lon + 180.0) / 360.0 * n)
+            y = ((1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
+
+            # Get map widget size
+            width = self.map_widget.width()
+            height = self.map_widget.height()
+
+            # Create QImage of current view
+            image = QImage(width, height, QImage.Format.Format_RGB32)
+            painter = QPainter(image)
+            self.map_widget.render(painter)
+            painter.end()
+
+            # Save temporary image
+            temp_dir = os.path.join(os.path.dirname(__file__), "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_path = os.path.join(temp_dir, "map_capture.tif")
+
+            # Convert QImage to numpy array
+            ptr = image.bits()
+            ptr.setsize(height * width * 4)
+            arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
+            arr = arr[:, :, :3]  # Remove alpha channel
+
+            # Calculate world coordinates for corners
+            x_min = center_lon - (width / 2) * (360 / (256 * n))
+            x_max = center_lon + (width / 2) * (360 / (256 * n))
+            y_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + height/2/256) / n))))
+            y_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y - height/2/256) / n))))
+
+            # Create GeoTIFF
+            transform = rasterio.transform.from_bounds(
+                x_min, y_min, x_max, y_max, width, height)
+
+            with rasterio.open(
+                temp_path,
+                'w',
+                driver='GTiff',
+                height=height,
+                width=width,
+                count=3,
+                dtype=arr.dtype,
+                crs='EPSG:4326',
+                transform=transform,
+            ) as dst:
+                for i in range(3):
+                    dst.write(arr[:, :, i], i + 1)
+
+            # Get raster info
+            info = get_raster_info(temp_path)
+
+            # Create and add new layer
+            layer_name = f"MapCapture_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            layer = RasterLayer(layer_name, temp_path, info)
+
+            # Add to layer manager and map canvas
+            self.layer_manager.add_layer(layer)
+            self.map_canvas.add_layer(layer)
+
+            QMessageBox.information(
+                self,
+                "Success",
+                "Map view captured and added as new layer"
+            )
+
+        except Exception as e:
+            logger.error("Error capturing map view")
+            logger.exception(e)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to capture map view: {str(e)}"
+            )
+
+    def update_training_layer(self):
+        """Update training labels layer when labels change."""
+        try:
+            self.training_layer.update_labels(self.label_dialog.labels)
+            self.map_canvas.update()
+        except Exception as e:
+            logger.error("Error updating training layer")
+            logger.exception(e)

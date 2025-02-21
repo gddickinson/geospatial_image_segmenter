@@ -285,18 +285,69 @@ class TrainingPaintTool(QWidget):
         self.current_path = QPainterPath()
         self.is_painting = False
         self.label_dialog = None  # Will be set by main window
+        self.extent = None  # Store the extent to ensure consistent coordinates
+        self._brush_positions = []  # Store all brush positions for visualization during painting
 
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        logger.debug("Initialized TrainingPaintTool")
+
+    def set_extent(self, extent):
+        """Set the geographic extent for coordinate consistency.
+
+        Args:
+            extent: Layer extent (min_x, min_y, max_x, max_y)
+        """
+        self.extent = extent
+        logger.debug(f"Set extent for TrainingPaintTool: {extent}")
 
     def paintEvent(self, event):
         """Paint current path."""
-        if self.current_path and self.label_dialog and self.label_dialog.active_label:
+        if self.label_dialog and self.label_dialog.active_label:
             painter = QPainter(self)
             painter.setPen(Qt.PenStyle.NoPen)
             color = self.label_dialog.active_label.color
             painter.setBrush(QColor(color.red(), color.green(), color.blue(), 128))
-            painter.drawPath(self.current_path)
+
+            # Draw all brush positions while painting
+            if self._brush_positions:
+                # Get map canvas reference
+                map_canvas = self.parent().parent()
+
+                # Use the same coordinate transformation as in get_image_coordinates
+                if map_canvas and self.extent and self.image_shape:
+                    viewport_bounds = map_canvas.viewport_bounds
+                    if viewport_bounds:
+                        width = map_canvas.width()
+                        height = map_canvas.height()
+                        world_width = viewport_bounds[2] - viewport_bounds[0]
+                        world_height = viewport_bounds[3] - viewport_bounds[1]
+
+                        # Calculate the correct size for the brush on screen
+                        brush_size_screen = (self.brush_size / self.image_shape[1]) * width
+
+                        # Draw each brush position
+                        for pos in self._brush_positions:
+                            pixel_x, pixel_y = pos.x(), pos.y()
+
+                            # Convert from pixel coordinates back to screen coordinates
+                            world_x = self.extent[0] + (pixel_x / self.image_shape[1]) * (self.extent[2] - self.extent[0])
+                            world_y = self.extent[3] - (pixel_y / self.image_shape[0]) * (self.extent[3] - self.extent[1])
+
+                            screen_x = ((world_x - viewport_bounds[0]) / world_width) * width
+                            screen_y = ((viewport_bounds[3] - world_y) / world_height) * height
+
+                            # Draw the brush at the correct screen position
+                            painter.drawEllipse(
+                                QPointF(screen_x, screen_y),
+                                brush_size_screen/2,
+                                brush_size_screen/2
+                            )
+                        return
+
+            # Fall back to drawing the path if we can't calculate the correct positions
+            if self.current_path:
+                painter.drawPath(self.current_path)
 
     def mousePressEvent(self, event):
         """Handle mouse press events."""
@@ -326,14 +377,11 @@ class TrainingPaintTool(QWidget):
         if image_pos is None:
             return
 
-        # Start new path
+        # Clear previous brush positions and add the current one
+        self._brush_positions = [image_pos]
+
+        # The path is now just a placeholder, we don't actually use it for rendering
         self.current_path = QPainterPath()
-        self.current_path.addEllipse(
-            image_pos.x() - self.brush_size/2,
-            image_pos.y() - self.brush_size/2,
-            self.brush_size,
-            self.brush_size
-        )
 
         # Update mask
         self.update_mask(image_pos)
@@ -348,13 +396,12 @@ class TrainingPaintTool(QWidget):
         if image_pos is None:
             return
 
-        # Add to path
-        self.current_path.addEllipse(
-            image_pos.x() - self.brush_size/2,
-            image_pos.y() - self.brush_size/2,
-            self.brush_size,
-            self.brush_size
-        )
+        # Add the current position to the brush positions list
+        self._brush_positions.append(image_pos)
+
+        # Limit the number of stored brush positions to prevent memory issues
+        if len(self._brush_positions) > 1000:
+            self._brush_positions = self._brush_positions[-1000:]
 
         # Update mask
         self.update_mask(image_pos)
@@ -362,27 +409,65 @@ class TrainingPaintTool(QWidget):
 
     def finish_painting(self):
         """Finish painting operation."""
-        self.is_painting = False
-        self.current_path = QPainterPath()
-        self.update()
-        self.selection_changed.emit()
+        if self.is_painting:
+            logger.debug("Finishing painting operation")
+            self.is_painting = False
+            self.current_path = QPainterPath()
+            self._brush_positions = []  # Clear brush positions
 
-        # Update map view to show overlay
-        if self.parent():
-            self.parent().update()
+            # Emit signal to notify parent about selection change
+            self.update()
+            self.selection_changed.emit()
+
+            # Force a repaint of the entire view after a short delay
+            # This ensures the painted pixels show up immediately
+            from PyQt6.QtCore import QTimer
+            parent = self.parent()
+            while parent:
+                if hasattr(parent, 'update'):
+                    logger.debug(f"Scheduling update for parent: {parent.__class__.__name__}")
+                    QTimer.singleShot(10, parent.update)
+                parent = parent.parent()
+
+            logger.debug("Painting finished, signal emitted")
 
     def get_image_coordinates(self, pos: QPoint) -> Optional[QPoint]:
         """Convert screen coordinates to image coordinates."""
-        if self.image_shape is None or self.transform is None:
+        if self.image_shape is None or not self.extent:
+            logger.debug("Missing image shape or extent, cannot convert coordinates")
             return None
 
-        # Get pixel coordinates
-        x, y = pos.x(), pos.y()
+        # Get map canvas reference and check viewport bounds
+        map_canvas = self.parent().parent()  # Get reference to map canvas
+        viewport_bounds = map_canvas.viewport_bounds
+        if not viewport_bounds:
+            logger.debug("No viewport bounds available")
+            return None
+
+        # Convert screen coordinates to world coordinates precisely the same way as in rendering
+        width = map_canvas.width()
+        height = map_canvas.height()
+        world_width = viewport_bounds[2] - viewport_bounds[0]
+        world_height = viewport_bounds[3] - viewport_bounds[1]
+
+        # Convert screen coordinates to world coordinates
+        world_x = viewport_bounds[0] + (pos.x() / width) * world_width
+        world_y = viewport_bounds[3] - (pos.y() / height) * world_height
+
+        # Convert world coordinates to pixel coordinates using the same transformation as in rendering
+        # This is the critical part for alignment
+        pixel_x = int((world_x - self.extent[0]) / (self.extent[2] - self.extent[0]) * self.image_shape[1])
+        pixel_y = int((self.extent[3] - world_y) / (self.extent[3] - self.extent[1]) * self.image_shape[0])
+
+        # Store the exact world coordinates for debugging
+        self._last_world_coords = (world_x, world_y)
 
         # Check bounds
-        if (0 <= x < self.image_shape[1] and
-            0 <= y < self.image_shape[0]):
-            return QPoint(x, y)
+        if (0 <= pixel_x < self.image_shape[1] and 0 <= pixel_y < self.image_shape[0]):
+            logger.debug(f"Converted screen ({pos.x()}, {pos.y()}) to pixel ({pixel_x}, {pixel_y})")
+            return QPoint(pixel_x, pixel_y)
+
+        logger.debug(f"Coordinates out of bounds: ({pixel_x}, {pixel_y})")
         return None
 
     def update_mask(self, pos: QPoint):
@@ -390,7 +475,9 @@ class TrainingPaintTool(QWidget):
         if not self.label_dialog or not self.label_dialog.active_label:
             return
 
-        x, y = int(pos.x()), int(pos.y())
+        # Get pixel coordinates directly
+        pixel_x, pixel_y = pos.x(), pos.y()
+
         label = self.label_dialog.active_label
 
         if label.mask is None:
@@ -399,37 +486,49 @@ class TrainingPaintTool(QWidget):
             else:
                 return
 
-        # Create circular brush
+        # Create circular brush with exact dimensions
         y_idx, x_idx = np.ogrid[-self.brush_size:self.brush_size+1,
                               -self.brush_size:self.brush_size+1]
         dist = np.sqrt(x_idx*x_idx + y_idx*y_idx)
         brush = dist <= self.brush_size/2
 
-        # Calculate brush bounds
-        y_start = max(0, y - self.brush_size)
-        y_end = min(self.image_shape[0], y + self.brush_size + 1)
-        x_start = max(0, x - self.brush_size)
-        x_end = min(self.image_shape[1], x + self.brush_size + 1)
+        # Calculate exact brush bounds
+        y_start = int(max(0, pixel_y - self.brush_size))
+        y_end = int(min(self.image_shape[0], pixel_y + self.brush_size + 1))
+        x_start = int(max(0, pixel_x - self.brush_size))
+        x_end = int(min(self.image_shape[1], pixel_x + self.brush_size + 1))
 
-        # Calculate brush array bounds
-        brush_y_start = max(0, -(y - self.brush_size))
-        brush_y_end = brush.shape[0] - max(0, y_end - self.image_shape[0])
-        brush_x_start = max(0, -(x - self.brush_size))
-        brush_x_end = brush.shape[1] - max(0, x_end - self.image_shape[1])
+        # Calculate exact brush array bounds
+        brush_y_start = int(max(0, -(pixel_y - self.brush_size)))
+        brush_y_end = int(brush.shape[0] - max(0, y_end - self.image_shape[0]))
+        brush_x_start = int(max(0, -(pixel_x - self.brush_size)))
+        brush_x_end = int(brush.shape[1] - max(0, x_end - self.image_shape[1]))
 
-        # Apply brush
-        label.mask[y_start:y_end, x_start:x_end] |= \
-            brush[brush_y_start:brush_y_end,
-                  brush_x_start:brush_x_end]
+        logger.debug(f"Updating mask at {pixel_x}, {pixel_y}")
+        logger.debug(f"Brush bounds: x={x_start}-{x_end}, y={y_start}-{y_end}")
+
+        # Apply brush with exact dimensions
+        try:
+            brush_section = brush[brush_y_start:brush_y_end, brush_x_start:brush_x_end]
+            mask_section = label.mask[y_start:y_end, x_start:x_end]
+
+            if brush_section.shape == mask_section.shape:
+                label.mask[y_start:y_end, x_start:x_end] |= brush_section
+            else:
+                logger.error(f"Shape mismatch - Brush: {brush_section.shape}, Mask: {mask_section.shape}")
+        except Exception as e:
+            logger.error(f"Error applying brush: {e}")
 
     def set_image_shape(self, shape: tuple):
         """Set the shape of the image being painted."""
         self.image_shape = shape
         self.resize(shape[1], shape[0])
+        logger.debug(f"Set image shape to {shape}")
 
     def set_transform(self, transform):
         """Set the geotransform for coordinate conversion."""
         self.transform = transform
+        logger.debug(f"Set transform to {transform}")
 
     def set_brush_size(self, size: int):
         """Set the brush size.
@@ -438,3 +537,4 @@ class TrainingPaintTool(QWidget):
             size: Brush size in pixels
         """
         self.brush_size = size
+        logger.debug(f"Set brush size to {size}")

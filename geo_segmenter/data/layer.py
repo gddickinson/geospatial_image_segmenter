@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple, List
 import numpy as np
 from PyQt6.QtGui import QPainter, QImage, QColor
-from PyQt6.QtCore import QObject, pyqtSignal, QRectF
+from PyQt6.QtCore import QObject, pyqtSignal, QRectF, Qt
+
 from PIL import Image
 import rasterio
 
@@ -39,6 +40,21 @@ class Layer(QObject):
         self._cache = {}
         self._cache_valid = False
 
+
+    def __init_subclass__(cls, **kwargs):
+        """Track subclass creation to detect potential overrides."""
+        super().__init_subclass__(**kwargs)
+        logger.debug(f"Layer subclass created: {cls.__name__}")
+
+        # Check if visible property is overridden
+        if 'visible' in cls.__dict__:
+            logger.debug(f"  WARNING: {cls.__name__} overrides the 'visible' property")
+
+        # Check if _visible attribute is accessed differently
+        for method_name, method in cls.__dict__.items():
+            if callable(method) and method_name not in ('__init__', '__init_subclass__'):
+                logger.debug(f"  Method {cls.__name__}.{method_name} defined")
+
     @property
     def name(self) -> str:
         """Get layer name."""
@@ -55,14 +71,41 @@ class Layer(QObject):
         """Get layer visibility."""
         return self._visible
 
+
+
     @visible.setter
     def visible(self, value: bool):
         """Set layer visibility."""
+        logger.debug(f"\n==== VISIBILITY SETTER called for {self.name} ====")
+        logger.debug(f"Setting visibility from {self._visible} to {value}")
+        logger.debug(f"Layer class: {self.__class__.__name__}")
+
+        # Check if there's an actual change
         if self._visible != value:
+            logger.debug(f"Changing visibility value")
             self._visible = value
+
+            # Verify the change took effect
+            logger.debug(f"_visible after change: {self._visible}")
+            logger.debug(f"visible property returns: {self.visible}")
+
+            # Emit signals (with verification)
+            logger.debug(f"Emitting visibility_changed signal with value={value}")
             self.visibility_changed.emit(value)
+
+            logger.debug(f"Emitting changed signal")
             self.changed.emit()
+
+            # Invalidate cache
+            old_cache_valid = self._cache_valid
+            self._cache_valid = False
+            logger.debug(f"Cache invalidated: {old_cache_valid} -> {self._cache_valid}")
+
             logger.debug(f"Layer {self.name} visibility changed to {value}")
+        else:
+            logger.debug(f"No change needed, visibility already {value}")
+
+        logger.debug(f"==== VISIBILITY SETTER completed ====\n")
 
     @property
     def opacity(self) -> float:
@@ -216,13 +259,20 @@ class RasterLayer(Layer):
         """Get layer extent."""
         return self._extent
 
+    # Replace the render method in your RasterLayer class with this version
+
     def render(self, painter: QPainter, map_canvas) -> None:
         """Render raster data."""
-        if not self.visible:
+        # VERY FIRST THING: Check visibility and return if not visible
+        if not self._visible:
+            logger.debug(f"SKIPPING RENDER for layer {self.name} - not visible (_visible=False)")
             return
 
         try:
             logger.debug(f"Starting render for layer {self.name}")
+            logger.debug(f"Canvas dimensions: {map_canvas.width()}x{map_canvas.height()}")
+            logger.debug(f"Viewport bounds: {map_canvas.viewport_bounds}")
+            logger.debug(f"Layer extent: {self._extent}")
 
             # Get viewport dimensions
             width = map_canvas.width()
@@ -268,8 +318,12 @@ class RasterLayer(Layer):
                         img_width = (self._extent[2] - self._extent[0]) * x_scale
                         img_height = (self._extent[3] - self._extent[1]) * y_scale
 
+                        logger.debug(f"Transform factors: x_scale={x_scale}, y_scale={y_scale}")
                         logger.debug(f"Image position: ({img_x}, {img_y})")
                         logger.debug(f"Image dimensions: {img_width}x{img_height}")
+
+                        # Save current opacity
+                        old_opacity = painter.opacity()
 
                         # Set opacity
                         painter.setOpacity(self.opacity)
@@ -277,6 +331,10 @@ class RasterLayer(Layer):
                         # Draw image with transformation
                         target_rect = QRectF(img_x, img_y, img_width, img_height)
                         painter.drawImage(target_rect, qimage)
+
+                        # Restore opacity
+                        painter.setOpacity(old_opacity)
+
                         logger.debug("Image drawn successfully")
 
         except Exception as e:
@@ -583,4 +641,136 @@ class SegmentationLayer(Layer):
 
         except Exception as e:
             logger.error(f"Error rendering segmentation layer: {str(e)}")
+            logger.exception(e)
+
+class TrainingLabelsLayer(Layer):
+    """Layer for displaying training labels and masks."""
+
+    def __init__(self, name: str, shape: tuple):
+        """Initialize training labels layer.
+
+        Args:
+            name: Layer name
+            shape: Image shape (height, width)
+        """
+        super().__init__(name)
+        self.shape = shape
+        self.label_masks = {}  # Dictionary mapping label names to masks
+        self.label_colors = {}  # Dictionary mapping label names to colors
+        self.extent = None
+        self.transform = None  # Store the transform to ensure consistent coordinates
+        logger.debug(f"Initialized TrainingLabelsLayer with shape {shape}")
+
+    def set_transform(self, transform):
+        """Set the geotransform for coordinate consistency.
+
+        Args:
+            transform: Rasterio transform object
+        """
+        self.transform = transform
+        logger.debug(f"Set transform for TrainingLabelsLayer: {transform}")
+
+    # Add this method to the TrainingLabelsLayer class to help diagnose issues
+
+    def update_labels(self, labels: Dict):
+        """Update label data."""
+        try:
+            # Store masks and colors
+            self.label_masks = {name: label.mask.copy() if label.mask is not None else None
+                              for name, label in labels.items()}
+            self.label_colors = {name: label.color for name, label in labels.items()}
+
+            # Enhanced logging
+            logger.debug(f"Updated {len(self.label_masks)} label masks in {self.name}:")
+            for name, mask in self.label_masks.items():
+                if mask is not None:
+                    pixel_count = np.sum(mask)
+                    logger.debug(f"  Label '{name}': {pixel_count} pixels")
+                else:
+                    logger.debug(f"  Label '{name}': No mask")
+
+            # Invalidate any caches
+            if hasattr(self, '_cache'):
+                self._cache_valid = False
+                self._cache.clear()
+
+        except Exception as e:
+            logger.error(f"Error updating training labels: {e}")
+            logger.exception(e)
+
+    def render(self, painter: QPainter, map_canvas) -> None:
+        """Render training labels."""
+        # CRITICAL: First check visibility directly - must be first line
+        if not self._visible:
+            logger.debug(f"SKIPPING RENDER for training labels layer {self.name} - not visible (_visible=False)")
+            return
+
+        try:
+            logger.debug(f"Rendering training labels layer: {self.name}")
+
+            # Get viewport dimensions
+            width = map_canvas.width()
+            height = map_canvas.height()
+
+            # Calculate display size and position
+            viewport_bounds = map_canvas.viewport_bounds
+            if not viewport_bounds or not self.extent:
+                logger.debug("Missing viewport bounds or extent, cannot render training labels")
+                return
+
+            # Calculate scale factors exactly the same as in RasterLayer
+            world_width = viewport_bounds[2] - viewport_bounds[0]
+            world_height = viewport_bounds[3] - viewport_bounds[1]
+
+            if world_width <= 0 or world_height <= 0:
+                logger.debug("Invalid world dimensions, cannot render training labels")
+                return
+
+            # Calculate image position in viewport exactly like RasterLayer
+            x_scale = width / world_width
+            y_scale = height / world_height
+
+            img_x = (self.extent[0] - viewport_bounds[0]) * x_scale
+            img_y = (viewport_bounds[3] - self.extent[3]) * y_scale
+            img_width = (self.extent[2] - self.extent[0]) * x_scale
+            img_height = (self.extent[3] - self.extent[1]) * y_scale
+
+            logger.debug(f"Training labels position: ({img_x}, {img_y}), dimensions: {img_width}x{img_height}")
+
+            # Set opacity
+            old_opacity = painter.opacity()
+            painter.setOpacity(self.opacity)
+
+            # Draw directly on the painter without using an image
+            for name, mask in self.label_masks.items():
+                if mask is not None and np.any(mask):
+                    color = self.label_colors[name]
+                    overlay_color = QColor(color.red(), color.green(), color.blue(), 160)
+
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(overlay_color)
+
+                    # Calculate pixel size
+                    pixel_width = img_width / self.shape[1]  # width
+                    pixel_height = img_height / self.shape[0]  # height
+
+                    # Draw each pixel directly - precision is critical here
+                    y_coords, x_coords = np.where(mask)
+
+                    # Log some details about the mask
+                    logger.debug(f"Label {name}: Drawing {len(x_coords)} pixels")
+
+                    # Draw each pixel
+                    for x, y in zip(x_coords, y_coords):
+                        pixel_x = img_x + x * pixel_width
+                        pixel_y = img_y + y * pixel_height
+                        painter.drawRect(QRectF(pixel_x, pixel_y, pixel_width, pixel_height))
+
+            # Restore original opacity
+            painter.setOpacity(old_opacity)
+
+            logger.debug(f"Completed rendering {len(self.label_masks)} label masks")
+
+        except Exception as e:
+            logger.error(f"Error rendering training labels layer: {str(e)}")
             logger.exception(e)
