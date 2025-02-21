@@ -20,6 +20,8 @@ class MapCanvas(QWidget):
         """Initialize the map canvas."""
         super().__init__(parent)
 
+        self.training_mode = False
+
         # Initialize state
         self._layers = []  # Use list to maintain layer order
         self.center = config.DEFAULT_CENTER
@@ -64,15 +66,20 @@ class MapCanvas(QWidget):
         layout.addWidget(status_widget)
 
     def set_tool(self, tool: str):
-        """Set the current map tool.
+        """Set the current map tool."""
+        try:
+            # Update training mode flag
+            self.training_mode = (tool == "training")
+            logger.debug(f"Set training mode to {self.training_mode}")
 
-        Args:
-            tool: Tool identifier
-        """
-        self.current_tool = tool
-        self.measuring_points = []  # Clear any measurement in progress
-        self.update()
-        logger.debug(f"Set map tool to: {tool}")
+            self.current_tool = tool
+            self.measuring_points = []
+            self.update()
+            logger.debug(f"Set map tool to: {tool}")
+
+        except Exception as e:
+            logger.error("Error setting map tool")
+            logger.exception(e)
 
 
     def add_layer(self, layer) -> None:
@@ -83,6 +90,10 @@ class MapCanvas(QWidget):
                 self._layers.append(layer)
                 logger.debug(f"Added layer to map canvas: {layer.name}")
                 logger.debug(f"Current layer count: {len(self._layers)}")
+
+                # For debugging - log all layers
+                for i, l in enumerate(self._layers):
+                    logger.debug(f"Layer[{i}]: {l.name}, visible={l.visible}")
 
                 # Initial zoom to first layer
                 if len(self._layers) == 1:
@@ -97,17 +108,23 @@ class MapCanvas(QWidget):
             logger.exception(e)
 
     def remove_layer(self, layer) -> None:
-        """Remove a layer from the map.
-
-        Args:
-            layer: Layer object to remove
-        """
+        """Remove a layer from the map."""
         try:
-            if layer in self.layers:
-                self.layers.remove(layer)
+            # Make sure we're using the correct attribute name
+            if hasattr(self, '_layers') and layer in self._layers:
+                logger.debug(f"Removing layer from map canvas: {layer.name}")
+                self._layers.remove(layer)
+
+                # For debugging - log remaining layers
+                logger.debug("Remaining layers:")
+                for i, l in enumerate(self._layers):
+                    logger.debug(f"Layer[{i}]: {l.name}, visible={l.visible}")
+
                 # Force a repaint
                 self.update()
                 logger.debug(f"Removed layer: {layer.name}")
+            else:
+                logger.debug(f"Layer {layer.name} not found in layers list or wrong attribute name")
 
         except Exception as e:
             logger.error("Error removing layer")
@@ -143,7 +160,6 @@ class MapCanvas(QWidget):
 
     def zoom_to_extent(self, extent: tuple):
         """Zoom to a specific extent.
-
         Args:
             extent: (min_x, min_y, max_x, max_y)
         """
@@ -166,8 +182,92 @@ class MapCanvas(QWidget):
                 self.update_scale_label()
                 logger.debug(f"Zoomed to extent: {extent}")
 
+                # Update map view if it exists and synced
+                if hasattr(self.parent(), 'map_widget'):
+                    center_lat = (extent[1] + extent[3]) / 2
+                    center_lon = (extent[0] + extent[2]) / 2
+                    self.parent().map_widget.set_center(center_lat, center_lon)
+
+                    # Calculate appropriate zoom level
+                    zoom = self.parent().calculate_zoom_level(world_width, world_height)
+                    self.parent().map_widget.zoom_level = zoom
+                    self.parent().map_widget.update()
+
         except Exception as e:
             logger.error("Error zooming to extent")
+            logger.exception(e)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press events."""
+        if hasattr(self, 'training_mode') and self.training_mode and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            # Pass event to paint tool when in training mode and shift is held
+            super().mousePressEvent(event)
+            return
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_panning = True
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.last_mouse_pos = event.pos()
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move events."""
+        try:
+            if hasattr(self, 'training_mode') and self.training_mode and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Pass event to paint tool when in training mode and shift is held
+                super().mouseMoveEvent(event)
+                return
+
+            # Convert coordinates for display
+            if self.viewport_bounds:
+                # Get mouse position relative to map view
+                pos = self.map_view.mapFrom(self, event.pos())
+
+                # Convert to world coordinates
+                width = self.map_view.width()
+                height = self.map_view.height()
+
+                if width > 0 and height > 0:
+                    x_frac = pos.x() / width
+                    y_frac = pos.y() / height
+                    world_x = self.viewport_bounds[0] + x_frac * (self.viewport_bounds[2] - self.viewport_bounds[0])
+                    world_y = self.viewport_bounds[1] + (1 - y_frac) * (self.viewport_bounds[3] - self.viewport_bounds[1])
+                    self.coord_label.setText(f"X: {world_x:.1f}, Y: {world_y:.1f}")
+
+            # Handle panning
+            if self.is_panning and self.last_mouse_pos:
+                dx = event.pos().x() - self.last_mouse_pos.x()
+                dy = event.pos().y() - self.last_mouse_pos.y()
+
+                if self.viewport_bounds:
+                    # Convert screen distance to world distance
+                    width = self.map_view.width()
+                    height = self.map_view.height()
+                    world_width = self.viewport_bounds[2] - self.viewport_bounds[0]
+                    world_height = self.viewport_bounds[3] - self.viewport_bounds[1]
+
+                    world_dx = -(dx * world_width / width)
+                    world_dy = dy * world_height / height
+
+                    # Update viewport bounds
+                    self.viewport_bounds = (
+                        self.viewport_bounds[0] + world_dx,
+                        self.viewport_bounds[1] + world_dy,
+                        self.viewport_bounds[2] + world_dx,
+                        self.viewport_bounds[3] + world_dy
+                    )
+
+                    # Update map view if exists and synced
+                    if hasattr(self.parent(), 'map_widget'):
+                        center_lat = (self.viewport_bounds[1] + self.viewport_bounds[3]) / 2
+                        center_lon = (self.viewport_bounds[0] + self.viewport_bounds[2]) / 2
+                        self.parent().map_widget.set_center(center_lat, center_lon)
+
+                    self.map_view.update()
+
+            self.last_mouse_pos = event.pos()
+
+        except Exception as e:
+            logger.error("Error handling mouse move")
             logger.exception(e)
 
     def update_scale_label(self):
@@ -403,74 +503,7 @@ class MapCanvas(QWidget):
             logger.exception(e)
             return (1, 0, 0, 1)
 
-    def mouseMoveEvent(self, event):
-        """Handle mouse move events."""
-        try:
-            if hasattr(self, 'training_mode') and self.training_mode and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                # Pass event to paint tool when in training mode and shift is held
-                super().mouseMoveEvent(event)
-                return
 
-            # Convert coordinates for display
-            if self.viewport_bounds:
-                # Get mouse position relative to map view
-                pos = self.map_view.mapFrom(self, event.pos())
-
-                # Convert to world coordinates
-                width = self.map_view.width()
-                height = self.map_view.height()
-
-                if width > 0 and height > 0:
-                    x_frac = pos.x() / width
-                    y_frac = pos.y() / height
-
-                    world_x = self.viewport_bounds[0] + x_frac * (self.viewport_bounds[2] - self.viewport_bounds[0])
-                    world_y = self.viewport_bounds[1] + (1 - y_frac) * (self.viewport_bounds[3] - self.viewport_bounds[1])
-
-                    self.coord_label.setText(f"X: {world_x:.1f}, Y: {world_y:.1f}")
-
-            # Handle panning
-            if self.is_panning and self.last_mouse_pos:
-                dx = event.pos().x() - self.last_mouse_pos.x()
-                dy = event.pos().y() - self.last_mouse_pos.y()
-
-                if self.viewport_bounds:
-                    # Convert screen distance to world distance
-                    width = self.map_view.width()
-                    height = self.map_view.height()
-                    world_width = self.viewport_bounds[2] - self.viewport_bounds[0]
-                    world_height = self.viewport_bounds[3] - self.viewport_bounds[1]
-
-                    world_dx = -(dx * world_width / width)
-                    world_dy = dy * world_height / height
-
-                    # Update viewport bounds
-                    self.viewport_bounds = (
-                        self.viewport_bounds[0] + world_dx,
-                        self.viewport_bounds[1] + world_dy,
-                        self.viewport_bounds[2] + world_dx,
-                        self.viewport_bounds[3] + world_dy
-                    )
-
-                    self.map_view.update()
-
-            self.last_mouse_pos = event.pos()
-
-        except Exception as e:
-            logger.error("Error handling mouse move")
-            logger.exception(e)
-
-    def mousePressEvent(self, event):
-        """Handle mouse press events."""
-        if hasattr(self, 'training_mode') and self.training_mode and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            # Pass event to paint tool when in training mode and shift is held
-            super().mousePressEvent(event)
-            return
-
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.is_panning = True
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.last_mouse_pos = event.pos()
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release events."""
@@ -517,3 +550,58 @@ class MapCanvas(QWidget):
         except Exception as e:
             logger.error("Error handling wheel event")
             logger.exception(e)
+
+    def draw_label_overlay(self, painter: QPainter, label_dialog):
+        """Draw the training label overlay."""
+        try:
+            if not label_dialog:
+                return
+
+            label_masks = label_dialog.get_label_masks()
+            if not label_masks:
+                return
+
+            for label_name, mask in label_masks.items():
+                if mask is None:
+                    continue
+
+                label = label_dialog.labels[label_name]
+                color = label.color
+
+                # Create semi-transparent color for overlay
+                overlay_color = QColor(color.red(), color.green(), color.blue(), 128)
+                painter.setBrush(overlay_color)
+                painter.setPen(Qt.PenStyle.NoPen)
+
+                # Draw each masked pixel
+                y_coords, x_coords = np.where(mask)
+                for x, y in zip(x_coords, y_coords):
+                    painter.drawRect(x, y, 1, 1)
+
+            logger.debug(f"Drew overlays for {len(label_masks)} labels")
+
+        except Exception as e:
+            logger.error("Error drawing label overlay")
+            logger.exception(e)
+
+    # Add this method to your MapCanvas class
+    def force_complete_repaint(self):
+        """Force a complete repaint of all layers."""
+        logger.debug("FORCE COMPLETE REPAINT: manually redrawing all layers")
+
+        # Get all layers
+        visible_layers = [layer for layer in self._layers if layer._visible]
+        invisible_layers = [layer for layer in self._layers if not layer._visible]
+
+        logger.debug(f"Found {len(visible_layers)} visible and {len(invisible_layers)} invisible layers")
+        for layer in visible_layers:
+            logger.debug(f"- Visible: {layer.name}")
+        for layer in invisible_layers:
+            logger.debug(f"- Invisible: {layer.name}")
+
+        # Force the view to redraw
+        if hasattr(self, 'map_view'):
+            self.map_view.repaint()  # Immediate repaint
+
+        # Force ourselves to redraw too
+        self.repaint()

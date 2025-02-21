@@ -2,7 +2,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                            QPushButton, QHBoxLayout, QMenu, QInputDialog,
                            QMessageBox, QStyle, QFormLayout, QDialog, QComboBox)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon, QAction
 
 from pathlib import Path
@@ -10,7 +10,7 @@ from typing import Optional, List, Dict
 
 import rasterio
 
-from ..data.layer import Layer, RasterLayer, VectorLayer, LidarLayer, SegmentationLayer
+from ..data.layer import Layer, RasterLayer, VectorLayer, LidarLayer, SegmentationLayer, TrainingLabelsLayer
 from ..utils.logger import setup_logger
 from ..gui.dialogs.stretch_dialog import StretchDialog
 from ..gui.dialogs.band_combo_dialog import BandComboDialog
@@ -39,30 +39,31 @@ class LayerManager(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        """Set up the user interface."""
-        layout = QVBoxLayout(self)
+            """Set up the user interface."""
+            layout = QVBoxLayout(self)
 
-        # Layer tree
-        self.layer_tree = QTreeWidget()
-        self.layer_tree.setHeaderLabels(["Layers"])
-        self.layer_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.layer_tree.customContextMenuRequested.connect(self.show_context_menu)
-        self.layer_tree.itemSelectionChanged.connect(self.on_selection_changed)
-        # Remove the old itemChanged connection if it exists
-        layout.addWidget(self.layer_tree)
+            # Layer tree
+            self.layer_tree = QTreeWidget()
+            self.layer_tree.setHeaderLabels(["Layers"])
+            self.layer_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.layer_tree.customContextMenuRequested.connect(self.show_context_menu)
+            self.layer_tree.itemSelectionChanged.connect(self.on_selection_changed)
+            # Connect the itemChanged signal to handle visibility toggles
+            self.layer_tree.itemChanged.connect(self.on_item_changed)
+            layout.addWidget(self.layer_tree)
 
-        # Buttons
-        button_layout = QHBoxLayout()
+            # Buttons
+            button_layout = QHBoxLayout()
 
-        add_btn = QPushButton("Add Layer")
-        add_btn.clicked.connect(self.show_add_menu)
-        button_layout.addWidget(add_btn)
+            add_btn = QPushButton("Add Layer")
+            add_btn.clicked.connect(self.show_add_menu)
+            button_layout.addWidget(add_btn)
 
-        remove_btn = QPushButton("Remove Layer")
-        remove_btn.clicked.connect(self.remove_selected_layer)
-        button_layout.addWidget(remove_btn)
+            remove_btn = QPushButton("Remove Layer")
+            remove_btn.clicked.connect(self.remove_selected_layer)
+            button_layout.addWidget(remove_btn)
 
-        layout.addLayout(button_layout)
+            layout.addLayout(button_layout)
 
     def show_add_menu(self):
         """Show menu for adding different layer types."""
@@ -156,11 +157,12 @@ class LayerManager(QWidget):
         try:
             # Add to internal list
             self.layers.append(layer)
+            logger.debug(f"Added layer {layer.name} to layer manager")
 
             # Create tree item
             item = QTreeWidgetItem([layer.name])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.CheckState.Checked if layer.visible else Qt.CheckState.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Checked)
 
             # Add icon based on layer type
             if isinstance(layer, RasterLayer):
@@ -169,7 +171,7 @@ class LayerManager(QWidget):
                 icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
             elif isinstance(layer, LidarLayer):
                 icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon)
-            elif isinstance(layer, SegmentationLayer):
+            elif isinstance(layer, TrainingLabelsLayer):
                 icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton)
             else:
                 icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
@@ -177,9 +179,6 @@ class LayerManager(QWidget):
 
             # Store layer reference
             item.setData(0, Qt.ItemDataRole.UserRole, layer)
-
-            # Connect item changed signal AFTER adding the item
-            self.layer_tree.itemChanged.connect(self.on_item_changed)
 
             # Add to tree
             self.layer_tree.addTopLevelItem(item)
@@ -189,14 +188,14 @@ class LayerManager(QWidget):
             self.active_layer = layer
             self.active_layer_changed.emit(layer)
 
-            # Connect layer visibility changes to update map
-            if hasattr(self.main_window, 'map_canvas'):
-                layer.visibility_changed.connect(lambda: self.main_window.map_canvas.update())
+            # Also add to map canvas layers if this is the main window's layer manager
+            if hasattr(self.parent(), 'map_canvas'):
+                if layer not in self.parent().map_canvas._layers:
+                    self.parent().map_canvas._layers.append(layer)
+                    logger.debug(f"Added layer {layer.name} to map canvas. Total layers: {len(self.parent().map_canvas._layers)}")
 
             # Emit signal
             self.layer_added.emit(layer)
-
-            logger.debug(f"Added layer: {layer.name}")
 
         except Exception as e:
             logger.error("Error adding layer")
@@ -308,27 +307,60 @@ class LayerManager(QWidget):
             logger.error("Error handling selection change")
             logger.exception(e)
 
-    def on_item_changed(self, item: QTreeWidgetItem, column: int):
-        """Handle item changes (like visibility checkbox).
+    # Replace the on_item_changed method in LayerManager with this
 
-        Args:
-            item: Changed tree item
-            column: Changed column
-        """
+    def on_item_changed(self, item: QTreeWidgetItem, column: int):
+        """Handle item changes (like visibility checkbox)."""
         try:
             if column == 0:  # Visibility checkbox
                 layer = item.data(0, Qt.ItemDataRole.UserRole)
                 if layer:
-                    layer.visible = item.checkState(0) == Qt.CheckState.Checked
-                    logger.debug(f"Layer {layer.name} visibility set to {layer.visible}")
+                    # Get checkbox state
+                    is_checked = item.checkState(0) == Qt.CheckState.Checked
+                    logger.debug(f"Item changed for layer {layer.name}: checked={is_checked}")
 
-                    # Force map canvas update
-                    if hasattr(self.parent(), 'map_canvas'):
-                        self.parent().map_canvas.update()
-                        self.parent().map_canvas.map_view.update()
+                    # Only update if there's an actual change
+                    if layer.visible != is_checked:
+                        # Update the visibility property
+                        layer.visible = is_checked
+                        logger.debug(f"Layer {layer.name} visibility set to {is_checked}")
+
+                        # CRITICAL: Directly update the layer in the map canvas
+                        if hasattr(self.parent(), 'map_canvas') and hasattr(self.parent().map_canvas, '_layers'):
+                            # Find the layer in map_canvas._layers and update it
+                            for canvas_layer in self.parent().map_canvas._layers:
+                                if canvas_layer.name == layer.name:
+                                    # Set visibility directly
+                                    canvas_layer._visible = is_checked
+                                    logger.debug(f"Updated visibility for layer {canvas_layer.name} in map canvas")
+
+                                    # Force cache invalidation
+                                    if hasattr(canvas_layer, 'invalidate_cache'):
+                                        canvas_layer.invalidate_cache()
+
+                        # CRITICAL: Force complete repaint at all levels
+                        if hasattr(self.parent(), 'map_canvas'):
+                            # Log before repaint
+                            logger.debug(f"Forcing repaint of map canvas and view")
+
+                            # Get map canvas and view
+                            map_canvas = self.parent().map_canvas
+                            map_view = map_canvas.map_view if hasattr(map_canvas, 'map_view') else None
+
+                            # Force immediate repaints
+                            if map_view:
+                                map_view.repaint()  # Force immediate repaint
+                            map_canvas.repaint()  # Force immediate repaint
+
+                            # Schedule delayed repaints for extra assurance
+                            QTimer.singleShot(10, lambda: map_view.repaint() if map_view else None)
+                            QTimer.singleShot(20, map_canvas.repaint)
+
+                            # Log after repaint
+                            logger.debug(f"Repaint requested for layer {layer.name} visibility change")
 
         except Exception as e:
-            logger.error("Error handling item change")
+            logger.error(f"Error handling item change: {e}")
             logger.exception(e)
 
     def show_context_menu(self, position):

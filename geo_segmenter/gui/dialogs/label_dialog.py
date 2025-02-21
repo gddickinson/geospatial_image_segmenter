@@ -8,12 +8,23 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from ...utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
 @dataclass
 class TrainingLabel:
     """Class to store label information and mask."""
     name: str
     color: QColor
     mask: Optional[np.ndarray] = None
+
+    def add_to_mask(self, new_mask: np.ndarray):
+        """Add new points to the mask."""
+        if self.mask is None:
+            self.mask = new_mask.copy()
+        else:
+            self.mask |= new_mask
 
     def clear_mask(self):
         """Clear the label mask."""
@@ -166,17 +177,24 @@ class LabelingDialog(QDialog):
         """Initialize masks for all labels.
 
         Args:
-            shape: Shape of the image (height, width)
+            shape: Shape tuple for mask arrays
         """
         for label in self.labels.values():
-            if label.mask is None or label.mask.shape != shape:
+            if label.mask is None:
                 label.mask = np.zeros(shape, dtype=bool)
+                logger.debug(f"Initialized mask for {label.name} with shape {shape}")
 
     def get_label_masks(self) -> Dict[str, np.ndarray]:
         """Get dictionary of all label masks.
-
         Returns:
             dict: Dictionary mapping label names to boolean masks
         """
-        return {name: label.mask.copy() if label.mask is not None else None
+        masks = {name: label.mask.copy() if label.mask is not None else None
                 for name, label in self.labels.items()}
+        # Add debug logging
+        for name, mask in masks.items():
+            if mask is not None:
+                logger.debug(f"Label {name} has mask with {np.sum(mask)} active pixels")
+            else:
+                logger.debug(f"Label {name} has no mask")
+        return masks
