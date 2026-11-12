@@ -23,18 +23,30 @@ classical random-forest pipeline.
 | `models/base.py` | `GeospatialModel` (feature set, `prepare_training_data`) |
 | `models/random_forest.py` | `RandomForestModel` (sklearn): `train` (80/20 stratified split, metrics, importances), `predict`, `predict_proba`, save/load |
 | `models/cnn.py` | `CNNModel` (PyTorch), desktop only |
+| `models/cnn_network.py` | `UNet`, `SegmentationDataset` (re-exported by `cnn.py`) |
 | `models/pipeline.py` | `default_band_map(n_bands)`, `add_default_extractors(model, n_bands, band_map, texture_local_mean)`: the GUI's training setup |
 | `models/features/base.py` | `FeatureExtractor`, `FeatureSet` (`enabled_names`, `enabled_feature_names`: column order) |
 | `models/features/spectral.py` | `SpectralFeatureExtractor`: NDVI, NDWI, SAVI, EVI (ARVI, SIPI), RG / NIR ratios |
 | `models/features/texture.py` | `TextureFeatureExtractor`: local std, range, Gaussian gradient magnitude per window; optional local mean (`local_mean`, default `config.TEXTURE_LOCAL_MEAN` = off; GUI checkbox "Texture: add local mean") |
 | `models/features/terrain.py` | `TerrainFeatureExtractor` for elevation data (slope, curvature, TPI, ...) |
-| `data/layer.py` | `Layer`, `RasterLayer` (display via `utils/display_stretch`), vector, LIDAR, segmentation, training-label layers |
+| `data/layer.py` | re-exports the layer classes below (import from here) |
+| `data/layer_base.py` | `Layer`: base class (name, visibility, opacity, CRS, render cache, signals) |
+| `data/layer_raster.py` | `RasterLayer` (display via `utils/display_stretch`) |
+| `data/layer_vector.py` | `VectorLayer` (geopandas), `LidarLayer` |
+| `data/layer_overlays.py` | `SegmentationLayer`, `TrainingLabelsLayer` |
 | `data/label.py`, `data/providers/` | labels; raster, tile, LIDAR and GPS providers |
 | `utils/display_stretch.py` | `prepare_display(data, band_indices, stretch_params)`: band combination + stretch (numpy only) |
 | `utils/synthetic_scene.py` | `make_scene(size, seed)`: seeded synthetic 4-band scene, known classes, example strokes (web demo) |
 | `utils/geo_utils.py`, `image_utils.py`, `lidar_utils.py`, `logger.py` | coordinate / raster / LIDAR helpers (PDAL imported on use: `require_pdal`), logging |
-| `gui/main_window.py` | `MainWindow`: menus, import, labels, `train_model`, `run_segmentation` |
-| `gui/*.py`, `gui/dialogs/*.py` | map canvas/view/widget, layer manager, paint tool, selection; label, stretch, band combo, RF/CNN, training, results, feature dialogs |
+| `gui/main_window.py` | `MainWindow`: layout, layer-visibility plumbing, settings, close; mixes in the four modules below |
+| `gui/main_window_menus.py` | `MainWindowMenusMixin`: menu bar, toolbar, layer-manager dock, analysis/model panel, map tools |
+| `gui/main_window_io.py` | `MainWindowIOMixin`: new/open/save project, import raster / vector / LIDAR |
+| `gui/main_window_training.py` | `MainWindowTrainingMixin`: training mode, label overlay, model parameters (incl. texture option), `train_model`, `run_segmentation` |
+| `gui/main_window_map_tab.py` | `MainWindowMapTabMixin`: base-map tab, GPS / IP location, centring, auto-follow, `capture_map_view` (writes `gui/temp/`, git-ignored) |
+| `gui/map_canvas.py` | `MapCanvas` (layers, tools, mouse/paint events); mixins `map_canvas_coords.py` (screen <-> geo, viewport, transform) and `map_canvas_overlays.py` (measurements, label overlay) |
+| `gui/layer_manager.py` | `LayerManager` (layer tree, add/remove, visibility); mixin `layer_manager_menus.py` (context menu, rename, zoom, stretch, bands) |
+| `gui/paint_tool.py`, `gui/training_paint_tool.py` | `PaintTool`; `TrainingPaintTool` (re-exported by `paint_tool.py`) |
+| other `gui/*.py`, `gui/dialogs/*.py` | map view/widget, selection; label, stretch, band combo, RF/CNN, training, results, feature dialogs |
 
 ## Web interface `geo_segmenter/web/`
 | File | Contents |
