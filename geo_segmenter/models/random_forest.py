@@ -107,9 +107,7 @@ class RandomForestModel(GeospatialModel):
 
             # Calculate feature importances
             importances = self.classifier.feature_importances_
-            feature_names = []
-            for extractor_name, features in self.get_feature_info().items():
-                feature_names.extend([f"{extractor_name}_{f}" for f in features])
+            feature_names = self.feature_set.enabled_feature_names()  # same order as the columns
 
             importance_dict = dict(zip(feature_names, importances))
 

@@ -101,7 +101,7 @@ class FeatureSet:
         """
         try:
             features = {}
-            for name in self.enabled_extractors:
+            for name in self.enabled_names():  # insertion order, not set order (hash-seed dependent)
                 extractor = self.extractors[name]
                 features[name] = extractor.extract_features(data)
                 logger.debug(f"Extracted features using {name}")
@@ -112,6 +112,14 @@ class FeatureSet:
             logger.exception(e)
             raise
     
+    def enabled_names(self) -> List[str]:
+        """Names of the enabled extractors in the order they were added (the column order of the features)."""
+        return [name for name in self.extractors if name in self.enabled_extractors]
+
+    def enabled_feature_names(self) -> List[str]:
+        """'<extractor>_<feature>' for every feature column, in column order."""
+        return [f"{name}_{f}" for name in self.enabled_names() for f in self.extractors[name].get_feature_names()]
+
     def get_feature_info(self) -> Dict[str, List[str]]:
         """Get information about available features.
         
