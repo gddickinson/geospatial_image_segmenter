@@ -1,7 +1,7 @@
 """Dialog for feature configuration and visualization."""
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                            QPushButton, QGroupBox, QLabel, QSpinBox,
-                           QDoubleSpinBox, QComboBox, QFormLayout)
+                           QDoubleSpinBox, QComboBox, QFormLayout, QWidget)
 from PyQt6.QtCore import Qt
 import numpy as np
 import matplotlib.pyplot as plt

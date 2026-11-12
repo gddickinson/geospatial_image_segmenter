@@ -45,3 +45,27 @@ def test_main_window_builds_and_display_uses_shared_stretch():
     if r.returncode and "sqlite3" in out and "Symbol not found" in out:
         pytest.skip("this Python's sqlite3 extension cannot load (set DYLD_LIBRARY_PATH to a matching libsqlite)")
     assert "GUI_OK" in r.stdout, out[-3000:]
+
+
+DIALOGS = """
+import numpy as np
+from PyQt6.QtWidgets import QApplication
+app = QApplication([])
+from geo_segmenter.gui.dialogs.feature_dialog import FeatureDialog
+from geo_segmenter.gui.dialogs.results_dialog import ResultsDialog
+img = np.random.default_rng(0).random((32, 32, 4))
+FeatureDialog(img)
+ResultsDialog(img, np.zeros((32, 32), int), np.full((32, 32, 2), 0.5), ['a', 'b'])
+print('DIALOGS_OK')
+"""
+
+
+@pytest.mark.skipif(not all(importlib.util.find_spec(m) for m in NEEDED), reason="needs the desktop dependencies")
+def test_feature_and_results_dialogs_build():
+    """Regression: both dialogs used QWidget without importing it (NameError on opening)."""
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    r = subprocess.run([sys.executable, "-c", DIALOGS], cwd=ROOT, capture_output=True, text=True, timeout=180, env=env)
+    out = r.stdout + r.stderr
+    if r.returncode and "sqlite3" in out and "Symbol not found" in out:
+        pytest.skip("this Python's sqlite3 extension cannot load (set DYLD_LIBRARY_PATH to a matching libsqlite)")
+    assert "DIALOGS_OK" in r.stdout, out[-3000:]

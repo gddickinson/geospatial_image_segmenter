@@ -1,7 +1,7 @@
 """Dialog for visualizing and exporting segmentation results."""
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                            QPushButton, QGroupBox, QLabel, QSpinBox,
-                           QComboBox, QFileDialog, QMessageBox)
+                           QComboBox, QFileDialog, QMessageBox, QWidget)
 from PyQt6.QtCore import Qt
 import numpy as np
 import matplotlib.pyplot as plt
