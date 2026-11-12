@@ -171,8 +171,13 @@ class TextureFeatureExtractor(FeatureExtractor):
             else:
                 gray = data
 
-            # Normalize to [0, 255] range for GLCM
-            gray = ((gray - gray.min()) / (gray.max() - gray.min()) * 255).astype(np.uint8)
+            # Normalize to [0, 255] range (a constant image becomes all zeros instead of NaN)
+            gray = np.asarray(gray, dtype=np.float64)
+            span = gray.max() - gray.min()
+            if span > 0:
+                gray = ((gray - gray.min()) / span * 255).astype(np.uint8)
+            else:
+                gray = np.zeros(gray.shape, dtype=np.uint8)
 
             features = []
 
@@ -185,9 +190,15 @@ class TextureFeatureExtractor(FeatureExtractor):
 
             # Calculate local statistics (faster than GLCM)
             for window_size in self.parameters['window_sizes']:
-                # Standard deviation
+                # Local standard deviation from exact window sums (the grey levels are integers, so the sums
+                # are exact and the result does not depend on summation order)
                 logger.debug(f"Calculating std dev for window size {window_size}")
-                std = ndimage.uniform_filter(gray.astype(float), size=window_size)
+                g = gray.astype(float)
+                box = np.ones((window_size, window_size))
+                n = float(window_size * window_size)
+                s1 = ndimage.correlate(g, box, mode='reflect')
+                s2 = ndimage.correlate(g * g, box, mode='reflect')
+                std = np.sqrt(np.maximum(n * s2 - s1 * s1, 0.0)) / n
                 features.append(std)
 
                 # Local range
@@ -223,28 +234,7 @@ class TextureFeatureExtractor(FeatureExtractor):
         return self.feature_names
 
     def _update_feature_names(self) -> None:
-        """Update list of feature names based on current parameters."""
+        """Update list of feature names to match extract_features (per window: std, range, gradient)."""
         self.feature_names = []
-
-        # GLCM features
         for w in self.parameters['window_sizes']:
-            for d in self.parameters['glcm_distances']:
-                for angle in self.parameters['glcm_angles']:
-                    angle_deg = int(np.degrees(angle))
-                    for prop in self.parameters['glcm_properties']:
-                        name = f"GLCM_{prop}_{w}px_{d}d_{angle_deg}deg"
-                        self.feature_names.append(name)
-
-        # Entropy features
-        for w in self.parameters['window_sizes']:
-            self.feature_names.append(f"Entropy_{w}px")
-
-        # Gradient features
-        for w in self.parameters['window_sizes']:
-            self.feature_names.append(f"GradientMagnitude_{w}px")
-            self.feature_names.append(f"GradientStd_{w}px")
-
-        # Statistical features
-        for w in self.parameters['window_sizes']:
-            self.feature_names.append(f"StdDev_{w}px")
-            self.feature_names.append(f"Range_{w}px")
+            self.feature_names.extend([f"StdDev_{w}px", f"Range_{w}px", f"GradientMagnitude_{w}px"])
