@@ -753,21 +753,9 @@ class MainWindow(QMainWindow):
                     n_epochs=self.cnn_epochs.value()
                 )
 
-            # Add feature extractors
-            if image_data.shape[-1] >= 3:  # If we have enough bands
-                from ..models.features.spectral import SpectralFeatureExtractor
-                spectral = SpectralFeatureExtractor()
-                # Set band mapping based on data
-                band_map = {'red': 0, 'green': 1, 'blue': 2}
-                if image_data.shape[-1] > 3:
-                    band_map['nir'] = 3
-                spectral.set_band_map(band_map)
-                model.add_feature_extractor('spectral', spectral)
-
-            # Add texture features
-            from ..models.features.texture import TextureFeatureExtractor
-            texture = TextureFeatureExtractor()
-            model.add_feature_extractor('texture', texture)
+            # Add feature extractors: spectral (>= 3 bands, R/G/B/NIR band map) and texture
+            from ..models.pipeline import add_default_extractors
+            add_default_extractors(model, image_data.shape[-1])
 
             # Show training dialog
             dialog = TrainingDialog(model_type, self)

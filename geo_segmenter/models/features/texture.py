@@ -164,8 +164,10 @@ class TextureFeatureExtractor(FeatureExtractor):
             # Convert to grayscale if needed
             if data.ndim == 3:
                 if data.shape[2] >= 3:
-                    # Use standard RGB to grayscale conversion
-                    gray = np.dot(data[..., :3], [0.2989, 0.5870, 0.1140])
+                    # Use standard RGB to grayscale conversion (written out rather than np.dot, whose BLAS
+                    # summation order varies between platforms; the web port computes the same expression)
+                    rgb = np.asarray(data[..., :3], dtype=np.float64)
+                    gray = rgb[..., 0] * 0.2989 + rgb[..., 1] * 0.5870 + rgb[..., 2] * 0.1140
                 else:
                     gray = data[..., 0]
             else:

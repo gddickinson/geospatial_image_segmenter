@@ -1,0 +1,62 @@
+/* Geospatial Image Segmenter: accent palette and page styles (theme in style.css). */
+:root { --accent:#9be564; --accent2:#ffb02e; --accent3:#4fb3ff; --glow:rgba(155,229,100,.13); }
+button, .btn, .seg button.on { color:#0b1405; }
+.two > *, .side > *, .row > * { min-width:0; }
+.hero .btn { margin-right:10px; }
+.hide { display:none !important; }
+.badge { display:inline-block; font:11px var(--mono); padding:2px 8px; border-radius:3px; border:1px solid var(--line); color:var(--mute); max-width:100%; }
+.badge.py { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 50%, transparent); }
+.badge.js { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 50%, transparent); }
+
+/* workbench */
+.bench { display:grid; grid-template-columns:300px minmax(0,1fr); gap:18px; align-items:start; }
+.bench .panel { margin:0 0 14px; padding:14px 16px; }
+.bench > *, .featview > * { min-width:0; }
+select { max-width:100%; }
+.bench h3 { margin-top:0; }
+.viewwrap { overflow:auto; max-height:78vh; background:#000; border:1px solid var(--line); border-radius:6px; }
+.viewwrap canvas { display:block; image-rendering:pixelated; width:100%; height:auto; }
+.viewwrap.zoomed canvas { width:auto; }
+.viewwrap.paint canvas { cursor:crosshair; touch-action:none; }
+.toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+.toolbar button { margin:0; }
+.toolbar .seg button { padding:6px 10px; }
+.labels { list-style:none; padding:0; margin:6px 0; }
+.labels li { display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:4px; border:1px solid transparent; }
+.labels li.on { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 7%, transparent); }
+.labels li button.pick { flex:1; text-align:left; background:none; color:var(--ink); padding:4px 0; margin:0; text-transform:none; letter-spacing:0; font:14px var(--sans); }
+.labels input[type=color] { width:30px; height:26px; padding:0; border:0; background:none; flex:none; }
+.labels .n { font:12px var(--mono); color:var(--mute); }
+.labels li button.x { background:none; color:var(--mute); margin:0; padding:2px 6px; }
+.status { font:12.5px var(--mono); color:var(--mute); min-height:1.6em; }
+.status.busy { color:var(--warn); }
+.progress { height:4px; background:var(--line); border-radius:2px; overflow:hidden; margin:6px 0; }
+.progress i { display:block; height:100%; width:0; background:var(--accent); transition:width .15s; }
+.chk { display:flex; gap:8px; align-items:center; color:var(--ink); font-size:14px; margin:6px 0; }
+.legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin:8px 0; font-size:13px; }
+.sw { display:inline-block; width:11px; height:11px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+.exports button { margin:6px 6px 0 0; }
+.tbl td { font:12.5px var(--mono); white-space:nowrap; }
+.kv { display:grid; grid-template-columns:auto 1fr; gap:2px 14px; font-size:14px; }
+.kv dt { color:var(--mute); } .kv dd { margin:0; font:13px var(--mono); }
+.featview { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:start; }
+.bars { display:grid; grid-template-columns:minmax(0,1fr) 120px 48px; gap:3px 10px; font-size:12.5px; align-items:center; }
+.bars .bar { height:9px; background:var(--accent3); border-radius:2px; }
+.bars button { background:none; color:var(--ink); padding:0; margin:0; font:12.5px var(--sans); text-transform:none; letter-spacing:0; text-align:left; }
+.shots img { width:100%; border:1px solid var(--line); border-radius:6px; }
+ol.steps li { margin:6px 0; }
+@media (max-width:860px) {
+  .bench, .featview { grid-template-columns:1fr; }
+  .bars { grid-template-columns:minmax(0,1fr) 70px 44px; }
+  .kv { grid-template-columns:1fr; } .kv dd { margin-bottom:6px; }
+}
+.feats summary { cursor:pointer; color:var(--mute); font-size:13px; margin:10px 0 4px; }
+.roles { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
+.roles label { margin-top:6px; }
+.toolbar label.inl { margin:0; display:inline; }
+.toolbar select.narrow { width:auto; max-width:100%; min-width:0; }
+.rampbar { display:flex; align-items:center; gap:8px; font:12px var(--mono); color:var(--mute); margin:6px 0; }
+.rampbar i { flex:1; height:10px; border-radius:2px; background:linear-gradient(90deg,#440154,#3b528b,#21918c,#5ec962,#fde725); }
+.warnc { color:var(--warn); }
+.tbl td .sw { margin-right:6px; }
+.bars > span:first-child, .bars span:nth-child(3n+1) { overflow-wrap:anywhere; }
