@@ -1,8 +1,6 @@
 """Texture feature extraction for image data."""
 import numpy as np
 from typing import List, Dict, Optional
-from skimage.feature import graycomatrix, graycoprops
-from skimage.measure import shannon_entropy
 from scipy import ndimage
 from .base import FeatureExtractor
 from ...utils.logger import setup_logger
