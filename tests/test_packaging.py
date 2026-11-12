@@ -1,9 +1,12 @@
 """setup.py: the console-script entry point exists; PDAL is optional (pip cannot install it)."""
 import ast
 import importlib
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -31,6 +34,7 @@ def test_pdal_is_an_extra_not_a_requirement():
     assert any(r.startswith("pdal") for r in ast.literal_eval(kw["extras_require"])["lidar"])
 
 
+@pytest.mark.skipif(importlib.util.find_spec("laspy") is None, reason="needs laspy (desktop dependency)")
 def test_lidar_utils_imports_without_pdal_and_explains_when_needed():
     code = ("import sys; sys.modules['pdal'] = None\n"
             "from geo_segmenter.utils import lidar_utils\n"
