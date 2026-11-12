@@ -2,3 +2,16 @@ test_data/reach_unsuper_clipped.tif
 test_data/reach_unsuper_clipped.tif.aux.xml
 test_data/reach_unsuper_clipped.tif.ovr
 map_cache/tile_cache.db
+
+# Python / OS artefacts
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+
+# Runtime files written by the app (config.py, utils/logger.py)
+geo_segmenter/geo_segmentation.log*
+geo_segmenter/cache/
+
+# Static site build (scripts/build_static.py)
+site/
