@@ -9,5 +9,6 @@
 - After changing the feature extractors, `display_stretch` or the RF export, run `python scripts/make_web_fixtures.py`
   and the node tests: the JS ports must keep matching Python.
 - Web app: `python run_web.py` (port 8235). Static site: `python scripts/build_static.py`.
-- Demo data is synthetic (`utils/synthetic_scene.py`); do not publish `test_data/sample.tif` (no source/licence recorded).
+- Demo data is synthetic (`utils/synthetic_scene.py`); `test_data/sample.tif` is synthetic too
+  (`scripts/make_sample_data.py`). Record any new data file's source and licence in DATA_SOURCES.md.
 - Update INTERFACE.md and SESSION_LOG.md when the structure changes.

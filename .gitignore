@@ -15,3 +15,7 @@ geo_segmenter/cache/
 
 # Static site build (scripts/build_static.py)
 site/
+
+# Map captures written by MainWindow.capture_map_view; GDAL statistics side-cars
+geo_segmenter/gui/temp/
+*.aux.xml

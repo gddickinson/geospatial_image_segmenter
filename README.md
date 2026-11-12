@@ -67,6 +67,8 @@ python main.py
 2. Import data:
    - Use File > Import to load raster, vector, or LIDAR data
    - Supported formats include GeoTIFF, Shapefile, LAS/LAZ
+   - To try it out, `test_data/sample.tif` is a synthetic 3-band GeoTIFF (regenerate with
+     `python scripts/make_sample_data.py`; see [DATA_SOURCES.md](DATA_SOURCES.md))
 
 3. Create training data:
    - Enable training mode from the toolbar

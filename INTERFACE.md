@@ -10,6 +10,7 @@ classical random-forest pipeline.
 | `main.py` | starts the desktop app (`gui.main_window.MainWindow`) |
 | `run_web.py` | starts the web app on http://127.0.0.1:8235 |
 | `scripts/build_static.py` | exports the static site to `site/` (GET endpoints as JSON) |
+| `scripts/make_sample_data.py` | writes `test_data/sample.tif` (synthetic 3-band uint16 GeoTIFF, UTM 31N, 10 m; see DATA_SOURCES.md) |
 | `scripts/make_web_fixtures.py` | writes the Python-vs-JS fixtures in `tests/fixtures/` |
 | `scripts/screenshots.py` | Playwright smoke test of every route + README screenshots (`docs/img/`) |
 
@@ -49,6 +50,6 @@ classical random-forest pipeline.
 
 ## Tests (`pytest tests`)
 `test_imports_light`, `test_spectral`, `test_texture`, `test_feature_set_order`, `test_random_forest` (regressions for
-fixed bugs), `test_web` (API, static build, node tests), `test_web_engine` (fixtures current, GeoTIFF writer, helpers),
+fixed bugs), `test_web` (API, static build, node tests), `test_web_engine` (fixtures current, GeoTIFF writer, helpers), `test_sample_data` (sample.tif layout, current),
 `test_gui_offscreen` (MainWindow in a subprocess, skipped without the desktop deps). `tests/gui_scripts/` holds manual
 GUI scripts (not collected).

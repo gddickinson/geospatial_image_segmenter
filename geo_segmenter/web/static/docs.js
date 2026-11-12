@@ -69,8 +69,8 @@ python run_web.py                 # http://127.0.0.1:8235</pre>
   <h2>Demo data</h2>
   <p>The demo scene is synthetic: generated with a fixed seed by <code>geo_segmenter/utils/synthetic_scene.py</code>
     (random land-cover layout, generic spectra of water, forest, cropland, bare soil and built-up surfaces, sensor
-    blur and noise). It is not a real place and its numbers say nothing about real land cover. The sample raster in
-    test_data/ is not used on this site because its source and licence are not recorded in the repository.</p>
+    blur and noise). It is not a real place and its numbers say nothing about real land cover. The desktop sample raster
+    test_data/sample.tif is synthetic too (scripts/make_sample_data.py, same generator, 1001 x 1001 px).</p>
   <h2>Credits</h2>
   <p>By George Dickinson; MIT licence. Built on PyQt6, GDAL/rasterio, NumPy, SciPy, scikit-image, scikit-learn and
     PyTorch; inspired by QGIS and ilastik (README).</p>`;
