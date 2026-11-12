@@ -42,6 +42,8 @@ class FeatureExtractor(ABC):
             params: Parameter dictionary
         """
         self.parameters.update(params)
+        if hasattr(self, '_update_feature_names'):  # keep the names in step with the maps (e.g. window_sizes)
+            self._update_feature_names()
         logger.debug(f"Updated parameters: {params}")
     
     def get_parameters(self) -> Dict[str, Any]:

@@ -1,11 +1,12 @@
 """MainWindow training and classification: training mode, label overlay, model parameters, train_model, run_segmentation."""
 import numpy as np
-from PyQt6.QtWidgets import QMessageBox, QApplication, QProgressDialog, QSpinBox, QDoubleSpinBox
+from PyQt6.QtWidgets import QMessageBox, QApplication, QProgressDialog, QSpinBox, QDoubleSpinBox, QCheckBox
 from PyQt6.QtCore import Qt, QTimer
 import rasterio
 import rasterio.transform
 from typing import Dict
 from ..utils.logger import setup_logger
+from .. import config
 from .layer_manager import RasterLayer, SegmentationLayer, TrainingLabelsLayer
 from .dialogs.training_dialog import TrainingDialog
 from ..models.random_forest import RandomForestModel
@@ -115,7 +116,8 @@ class MainWindowTrainingMixin:
 
             # Add feature extractors: spectral (>= 3 bands, R/G/B/NIR band map) and texture
             from ..models.pipeline import add_default_extractors
-            add_default_extractors(model, image_data.shape[-1])
+            add_default_extractors(model, image_data.shape[-1],
+                                   texture_local_mean=self.texture_local_mean.isChecked())
 
             # Show training dialog
             dialog = TrainingDialog(model_type, self)
@@ -331,6 +333,10 @@ class MainWindowTrainingMixin:
 
     def update_model_parameters(self):
         """Update parameter widgets based on selected model."""
+        # Keep the feature option's state across model switches
+        local_mean = (self.texture_local_mean.isChecked() if hasattr(self, 'texture_local_mean')
+                      else config.TEXTURE_LOCAL_MEAN)
+
         # Clear existing parameters
         layout = self.params_group.layout()
         while layout.count():
@@ -374,6 +380,14 @@ class MainWindowTrainingMixin:
             self.cnn_learning_rate.setDecimals(4)
             self.cnn_learning_rate.setSingleStep(0.0001)
             layout.addRow("Learning Rate:", self.cnn_learning_rate)
+
+        # Feature option shared by both models
+        self.texture_local_mean = QCheckBox("Texture: add local mean")
+        self.texture_local_mean.setChecked(local_mean)
+        self.texture_local_mean.setToolTip("Also use the local mean grey level per texture window (smoothed "
+                                           "brightness). Can help on noisy or single-band imagery; mostly "
+                                           "redundant with the spectral bands otherwise.")
+        layout.addRow(self.texture_local_mean)
 
     def update_training_layer(self):
         """Update training labels layer when labels change."""

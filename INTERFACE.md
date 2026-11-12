@@ -19,14 +19,14 @@ classical random-forest pipeline.
 ## Package `geo_segmenter/` (subpackages import lazily, see `__init__.py`)
 | Module | Contents |
 |---|---|
-| `config.py` | paths, map URLs, SPECTRAL_INDICES, TEXTURE_WINDOWS, RF_N_ESTIMATORS / RF_MAX_DEPTH, CNN and GUI defaults |
+| `config.py` | paths, map URLs, SPECTRAL_INDICES, TEXTURE_WINDOWS, TEXTURE_LOCAL_MEAN, RF_N_ESTIMATORS / RF_MAX_DEPTH, CNN and GUI defaults |
 | `models/base.py` | `GeospatialModel` (feature set, `prepare_training_data`) |
 | `models/random_forest.py` | `RandomForestModel` (sklearn): `train` (80/20 stratified split, metrics, importances), `predict`, `predict_proba`, save/load |
 | `models/cnn.py` | `CNNModel` (PyTorch), desktop only |
-| `models/pipeline.py` | `default_band_map(n_bands)`, `add_default_extractors(model, n_bands, band_map)`: the GUI's training setup |
+| `models/pipeline.py` | `default_band_map(n_bands)`, `add_default_extractors(model, n_bands, band_map, texture_local_mean)`: the GUI's training setup |
 | `models/features/base.py` | `FeatureExtractor`, `FeatureSet` (`enabled_names`, `enabled_feature_names`: column order) |
 | `models/features/spectral.py` | `SpectralFeatureExtractor`: NDVI, NDWI, SAVI, EVI (ARVI, SIPI), RG / NIR ratios |
-| `models/features/texture.py` | `TextureFeatureExtractor`: local std, range, Gaussian gradient magnitude per window |
+| `models/features/texture.py` | `TextureFeatureExtractor`: local std, range, Gaussian gradient magnitude per window; optional local mean (`local_mean`, default `config.TEXTURE_LOCAL_MEAN` = off; GUI checkbox "Texture: add local mean") |
 | `models/features/terrain.py` | `TerrainFeatureExtractor` for elevation data (slope, curvature, TPI, ...) |
 | `data/layer.py` | `Layer`, `RasterLayer` (display via `utils/display_stretch`), vector, LIDAR, segmentation, training-label layers |
 | `data/label.py`, `data/providers/` | labels; raster, tile, LIDAR and GPS providers |
@@ -51,7 +51,7 @@ classical random-forest pipeline.
 | `static/*.test.mjs`, `fixture_util.mjs` | node tests against `tests/fixtures/*.json` |
 
 ## Tests (`pytest tests`)
-`test_imports_light`, `test_spectral`, `test_texture`, `test_feature_set_order`, `test_random_forest` (regressions for
+`test_imports_light`, `test_spectral`, `test_texture`, `test_feature_set_order`, `test_random_forest`, `test_texture_options` (regressions for
 fixed bugs), `test_web` (API, static build, node tests), `test_web_engine` (fixtures current, GeoTIFF writer, helpers), `test_sample_data` (sample.tif layout, current),
 `test_packaging` (setup.py entry point, PDAL optional),
 `test_gui_offscreen` (MainWindow in a subprocess, skipped without the desktop deps). `tests/gui_scripts/` holds manual

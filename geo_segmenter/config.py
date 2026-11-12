@@ -37,6 +37,10 @@ SPECTRAL_INDICES = [
 ]
 
 TEXTURE_WINDOWS = [3, 5, 7]  # Window sizes for texture analysis
+# Also give the classifier the local mean grey level per window (smoothed brightness). Off by default: it mostly
+# repeats the spectral bands, but it can help on noisy or single-band imagery. (Before 2026-11 the desktop app fed
+# this map to the classifier by mistake in place of the local standard deviation.)
+TEXTURE_LOCAL_MEAN = False
 TERRAIN_ANALYSIS_SCALES = [10, 25, 50]  # Scales in meters
 
 # Model parameters

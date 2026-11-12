@@ -18,6 +18,7 @@ class TextureFeatureExtractor(FeatureExtractor):
         # Default parameters
         self.parameters = {
             'window_sizes': config.TEXTURE_WINDOWS,
+            'local_mean': config.TEXTURE_LOCAL_MEAN,  # add a LocalMean map per window
             'glcm_distances': [1, 2, 4],
             'glcm_angles': [0, np.pi/4, np.pi/2, 3*np.pi/4],
             'glcm_properties': [
@@ -219,6 +220,10 @@ class TextureFeatureExtractor(FeatureExtractor):
                 )
                 features.append(gradient)
 
+                # Optional local mean grey level (window sum / n, mode='reflect')
+                if self.parameters.get('local_mean', False):
+                    features.append(s1 / n)
+
             logger.debug("Texture feature extraction completed")
             return np.stack(features, axis=0)
 
@@ -236,7 +241,9 @@ class TextureFeatureExtractor(FeatureExtractor):
         return self.feature_names
 
     def _update_feature_names(self) -> None:
-        """Update list of feature names to match extract_features (per window: std, range, gradient)."""
+        """Update list of feature names to match extract_features (per window: std, range, gradient[, mean])."""
         self.feature_names = []
         for w in self.parameters['window_sizes']:
             self.feature_names.extend([f"StdDev_{w}px", f"Range_{w}px", f"GradientMagnitude_{w}px"])
+            if self.parameters.get('local_mean', False):
+                self.feature_names.append(f"LocalMean_{w}px")
