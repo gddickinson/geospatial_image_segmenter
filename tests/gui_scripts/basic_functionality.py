@@ -5,7 +5,7 @@ import numpy as np
 from PyQt6.QtWidgets import QApplication
 
 # Add parent directory to path
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from geo_segmenter.gui.main_window import MainWindow
 from geo_segmenter.data.providers.raster import RasterProvider

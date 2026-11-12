@@ -101,7 +101,7 @@ def main():
         app = QApplication(sys.argv)
 
         # Get test file path
-        test_path = Path(__file__).parent / "test_data" / "sample.tif"
+        test_path = Path(__file__).resolve().parents[2] / "test_data" / "sample.tif"
         if not test_path.exists():
             print(f"Test file not found: {test_path}")
             return
