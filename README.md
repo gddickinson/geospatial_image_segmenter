@@ -29,8 +29,8 @@ A Python-based desktop application for segmenting and classifying geospatial ima
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/geospatial-segmentation-tool.git
-cd geospatial-segmentation-tool
+git clone https://github.com/gddickinson/geospatial_image_segmenter.git
+cd geospatial_image_segmenter
 ```
 
 2. Create a virtual environment (recommended):
@@ -39,9 +39,11 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies:
+3. Install dependencies (there is no requirements.txt; these are the packages the code imports, also listed in
+   setup.py; PDAL is not pip-installable, use conda-forge):
 ```bash
-pip install -r requirements.txt
+conda install -c conda-forge pdal python-pdal
+pip install PyQt6 rasterio pyproj geopandas shapely scikit-learn scikit-image scipy torch laspy pyserial requests matplotlib
 ```
 
 ## Dependencies
@@ -84,7 +86,7 @@ python main.py
 ## Project Structure
 
 ```
-geospatial_segmenter/
+geo_segmenter/
 ├── data/                 # Data handling modules
 │   ├── layer.py         # Base layer classes
 │   └── providers/       # Data providers
@@ -99,7 +101,8 @@ geospatial_segmenter/
 ├── utils/             # Utility functions
 │   ├── geo_utils.py
 │   └── image_utils.py
-└── main.py           # Application entry point
+├── web/              # web interface (see below)
+└── ../main.py        # Application entry point (repo root)
 ```
 
 ## Web interface and static site
