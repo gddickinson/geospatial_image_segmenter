@@ -1,19 +1,20 @@
-"""Map canvas widget for displaying and interacting with geospatial data."""
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout
-from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF
-from PyQt6.QtGui import QPainter, QPen, QColor, QMouseEvent
+"""Map canvas widget for displaying and interacting with geospatial data.
 
-import numpy as np
-from typing import Optional, List, Tuple
+Coordinate transforms are in map_canvas_coords.py and measurement / label overlays in map_canvas_overlays.py
+(mixins of MapCanvas).
+"""
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout
+from PyQt6.QtCore import Qt
+
 from ..utils.logger import setup_logger
-from ..utils.geo_utils import (transform_coordinates, calculate_scale,
-                             calculate_viewport_bounds)
 from .. import config
 from ..gui.map_view import MapViewWidget
+from .map_canvas_coords import MapCanvasCoordsMixin
+from .map_canvas_overlays import MapCanvasOverlaysMixin
 
 logger = setup_logger(__name__)
 
-class MapCanvas(QWidget):
+class MapCanvas(MapCanvasCoordsMixin, MapCanvasOverlaysMixin, QWidget):
     """Widget for displaying and interacting with map data."""
 
     def __init__(self, parent=None):
@@ -80,7 +81,6 @@ class MapCanvas(QWidget):
         except Exception as e:
             logger.error("Error setting map tool")
             logger.exception(e)
-
 
     def add_layer(self, layer) -> None:
         """Add a layer to the map."""
@@ -281,160 +281,6 @@ class MapCanvas(QWidget):
             logger.error("Error updating scale label")
             logger.exception(e)
 
-
-
-    def screen_to_geo(self, pos: QPointF) -> Tuple[float, float]:
-        """Convert screen coordinates to geographic coordinates.
-
-        Args:
-            pos: Screen position
-
-        Returns:
-            tuple: (latitude, longitude)
-        """
-        try:
-            # Get viewport bounds
-            bounds = calculate_viewport_bounds(
-                self.center,
-                self.width(),
-                self.height(),
-                self.scale
-            )
-
-            # Calculate fractions
-            x_frac = pos.x() / self.width()
-            y_frac = pos.y() / self.height()
-
-            # Interpolate coordinates
-            lon = bounds[0] + x_frac * (bounds[2] - bounds[0])
-            lat = bounds[3] - y_frac * (bounds[3] - bounds[1])
-
-            return (lat, lon)
-
-        except Exception as e:
-            logger.error("Error converting screen to geo coordinates")
-            logger.exception(e)
-            raise
-
-    def geo_to_screen(self, coords: Tuple[float, float]) -> QPointF:
-        """Convert geographic coordinates to screen coordinates.
-
-        Args:
-            coords: (latitude, longitude)
-
-        Returns:
-            QPointF: Screen position
-        """
-        try:
-            lat, lon = coords
-            bounds = calculate_viewport_bounds(
-                self.center,
-                self.width(),
-                self.height(),
-                self.scale
-            )
-
-            # Calculate fractions
-            x_frac = (lon - bounds[0]) / (bounds[2] - bounds[0])
-            y_frac = (bounds[3] - lat) / (bounds[3] - bounds[1])
-
-            # Convert to screen coordinates
-            x = x_frac * self.width()
-            y = y_frac * self.height()
-
-            return QPointF(x, y)
-
-        except Exception as e:
-            logger.error("Error converting geo to screen coordinates")
-            logger.exception(e)
-            raise
-
-
-    def draw_measurements(self, painter: QPainter) -> None:
-        """Draw measurement overlay.
-
-        Args:
-            painter: QPainter object
-        """
-        try:
-            if not self.measuring_points:
-                return
-
-            # Set up pen
-            pen = QPen(QColor(255, 0, 0))
-            pen.setWidth(2)
-            painter.setPen(pen)
-
-            # Draw points and lines
-            for i in range(len(self.measuring_points)):
-                # Draw point
-                point_screen = self.geo_to_screen(self.measuring_points[i])
-                painter.drawEllipse(point_screen, 3, 3)
-
-                # Draw line to previous point
-                if i > 0:
-                    prev_point = self.geo_to_screen(self.measuring_points[i-1])
-                    painter.drawLine(prev_point, point_screen)
-
-            # Calculate and display measurement
-            if len(self.measuring_points) > 1:
-                if self.current_tool == "measure_distance":
-                    self.display_distance_measurement()
-                elif self.current_tool == "measure_area":
-                    self.display_area_measurement()
-
-        except Exception as e:
-            logger.error("Error drawing measurements")
-            logger.exception(e)
-
-    def display_distance_measurement(self) -> None:
-        """Display distance measurement result."""
-        try:
-            from geopy.distance import geodesic
-
-            total_distance = 0
-            for i in range(1, len(self.measuring_points)):
-                point1 = self.measuring_points[i-1]
-                point2 = self.measuring_points[i]
-                distance = geodesic(point1, point2).meters
-                total_distance += distance
-
-            if total_distance < 1000:
-                text = f"Distance: {total_distance:.1f} m"
-            else:
-                text = f"Distance: {total_distance/1000:.2f} km"
-
-            self.coord_label.setText(text)
-
-        except Exception as e:
-            logger.error("Error displaying distance measurement")
-            logger.exception(e)
-
-    def display_area_measurement(self) -> None:
-        """Display area measurement result."""
-        try:
-            from shapely.geometry import Polygon
-
-            if len(self.measuring_points) < 3:
-                return
-
-            # Create polygon
-            poly = Polygon([(p[1], p[0]) for p in self.measuring_points])
-
-            # Calculate area (approximate)
-            area = abs(poly.area * 111320 * 111320)  # Convert to square meters
-
-            if area < 10000:
-                text = f"Area: {area:.1f} m²"
-            else:
-                text = f"Area: {area/10000:.2f} ha"
-
-            self.coord_label.setText(text)
-
-        except Exception as e:
-            logger.error("Error displaying area measurement")
-            logger.exception(e)
-
     def cleanup(self):
         """Clean up resources."""
         try:
@@ -446,16 +292,6 @@ class MapCanvas(QWidget):
         except Exception as e:
             logger.error("Error during cleanup")
             logger.exception(e)
-
-    def get_viewport_bounds(self) -> Tuple[float, float, float, float]:
-        """Get current viewport bounds."""
-        if self.viewport_bounds:
-            return self.viewport_bounds
-
-        # Default to layer extent or world bounds
-        if self.layers:
-            return self.layers[0].extent()
-        return (-180, -90, 180, 90)
 
     def paintEvent(self, event) -> None:
         """Handle paint events."""
@@ -478,32 +314,6 @@ class MapCanvas(QWidget):
         logger.debug(f"Canvas resized to {self.width()}x{self.height()}")
         if self.viewport_bounds:
             self.update()  # Force redraw with new size
-
-    def get_transform(self) -> Tuple[float, float, float, float]:
-        """Get the transformation between viewport and world coordinates."""
-        try:
-            if not self.viewport_bounds:
-                return (1, 0, 0, 1)  # Identity transform
-
-            # Get viewport and world dimensions
-            vp_width = self.width()
-            vp_height = self.height()
-
-            world_width = self.viewport_bounds[2] - self.viewport_bounds[0]
-            world_height = self.viewport_bounds[3] - self.viewport_bounds[1]
-
-            # Calculate scale factors
-            scale_x = vp_width / world_width if world_width != 0 else 1
-            scale_y = vp_height / world_height if world_height != 0 else 1
-
-            return (scale_x, scale_y, self.viewport_bounds[0], self.viewport_bounds[1])
-
-        except Exception as e:
-            logger.error("Error calculating transform")
-            logger.exception(e)
-            return (1, 0, 0, 1)
-
-
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release events."""
@@ -551,38 +361,6 @@ class MapCanvas(QWidget):
             logger.error("Error handling wheel event")
             logger.exception(e)
 
-    def draw_label_overlay(self, painter: QPainter, label_dialog):
-        """Draw the training label overlay."""
-        try:
-            if not label_dialog:
-                return
-
-            label_masks = label_dialog.get_label_masks()
-            if not label_masks:
-                return
-
-            for label_name, mask in label_masks.items():
-                if mask is None:
-                    continue
-
-                label = label_dialog.labels[label_name]
-                color = label.color
-
-                # Create semi-transparent color for overlay
-                overlay_color = QColor(color.red(), color.green(), color.blue(), 128)
-                painter.setBrush(overlay_color)
-                painter.setPen(Qt.PenStyle.NoPen)
-
-                # Draw each masked pixel
-                y_coords, x_coords = np.where(mask)
-                for x, y in zip(x_coords, y_coords):
-                    painter.drawRect(x, y, 1, 1)
-
-            logger.debug(f"Drew overlays for {len(label_masks)} labels")
-
-        except Exception as e:
-            logger.error("Error drawing label overlay")
-            logger.exception(e)
 
     # Add this method to your MapCanvas class
     def force_complete_repaint(self):
