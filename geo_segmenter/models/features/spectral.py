@@ -37,6 +37,8 @@ class SpectralFeatureExtractor(FeatureExtractor):
             numpy.ndarray: Feature array
         """
         try:
+            # Work in float64: rasters arrive as uint8/uint16, where `nir - red` would wrap around
+            data = np.asarray(data, dtype=np.float64)
             features = []
             eps = 1e-8  # Small value to prevent division by zero
             
