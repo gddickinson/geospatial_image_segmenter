@@ -2,11 +2,11 @@
 import numpy as np
 from typing import Optional, Dict, Tuple, List
 import laspy
-import pdal
 import json
 from pathlib import Path
 
 from ...utils.logger import setup_logger
+from ...utils.lidar_utils import require_pdal
 from ... import config
 
 logger = setup_logger(__name__)
@@ -144,6 +144,7 @@ class LidarProvider:
             pdal_data['Intensity'] = point_cloud[:, 4]
             
             # Run pipeline
+            pdal = require_pdal()
             pipeline = pdal.Pipeline(json.dumps(pipeline_json))
             pipeline.execute(pdal_data)
             

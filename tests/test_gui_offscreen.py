@@ -1,8 +1,8 @@
 """The desktop GUI still builds (offscreen) and its raster display uses utils/display_stretch.
 
 Runs in a fresh subprocess (other Qt bindings in a shared environment, e.g. PySide6, can load a different QtCore
-into the pytest process first). Skipped when the desktop dependencies are missing; PDAL (conda only) is replaced by a
-stub module, as only lidar_utils uses it.
+into the pytest process first). Skipped when the desktop dependencies are missing. PDAL is blocked (optional: only
+LIDAR ground classification needs it), so this also checks that the GUI starts without it.
 """
 import importlib.util
 import os
@@ -16,12 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 NEEDED = ("PyQt6", "rasterio", "geopandas", "serial", "requests", "torch", "laspy", "matplotlib", "sqlite3")
 
 CODE = """
-import sys, types
+import sys
 import numpy as np
-sys.modules['pdal'] = types.ModuleType('pdal')
+sys.modules['pdal'] = None  # import pdal -> ImportError
 from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 from geo_segmenter.gui.main_window import MainWindow
+from geo_segmenter.main import main  # the console-script entry point exists
+from geo_segmenter.data.providers.lidar_provider import LidarProvider
 from geo_segmenter.data.layer import RasterLayer
 from geo_segmenter.utils.display_stretch import prepare_display
 w = MainWindow()

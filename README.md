@@ -39,11 +39,14 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies (there is no requirements.txt; these are the packages the code imports, also listed in
-   setup.py; PDAL is not pip-installable, use conda-forge):
+3. Install the package and its dependencies (this also adds a `geo-segmenter` command that starts the app):
+```bash
+pip install -e .
+```
+   PDAL is optional (only LIDAR ground classification uses it) and cannot be installed with pip; if you need it,
+   install it from conda-forge:
 ```bash
 conda install -c conda-forge pdal python-pdal
-pip install PyQt6 rasterio pyproj geopandas shapely scikit-learn scikit-image scipy torch laspy pyserial requests matplotlib
 ```
 
 ## Dependencies
@@ -61,7 +64,7 @@ pip install PyQt6 rasterio pyproj geopandas shapely scikit-learn scikit-image sc
 
 1. Launch the application:
 ```bash
-python main.py
+geo-segmenter        # or, from the repository: python main.py
 ```
 
 2. Import data:

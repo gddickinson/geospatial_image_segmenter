@@ -7,7 +7,9 @@ classical random-forest pipeline.
 ## Entry points
 | File | Purpose |
 |---|---|
-| `main.py` | starts the desktop app (`gui.main_window.MainWindow`) |
+| `main.py` | starts the desktop app from a checkout (calls `geo_segmenter.main.main`) |
+| `geo_segmenter/main.py` | `main()`: QApplication + `gui.main_window.MainWindow`; the `geo-segmenter` console script (setup.py) |
+| `setup.py` | `pip install -e .`; extras `lidar` (PDAL, needs the C++ library: use conda), `web`, `dev` |
 | `run_web.py` | starts the web app on http://127.0.0.1:8235 |
 | `scripts/build_static.py` | exports the static site to `site/` (GET endpoints as JSON) |
 | `scripts/make_sample_data.py` | writes `test_data/sample.tif` (synthetic 3-band uint16 GeoTIFF, UTM 31N, 10 m; see DATA_SOURCES.md) |
@@ -30,7 +32,7 @@ classical random-forest pipeline.
 | `data/label.py`, `data/providers/` | labels; raster, tile, LIDAR and GPS providers |
 | `utils/display_stretch.py` | `prepare_display(data, band_indices, stretch_params)`: band combination + stretch (numpy only) |
 | `utils/synthetic_scene.py` | `make_scene(size, seed)`: seeded synthetic 4-band scene, known classes, example strokes (web demo) |
-| `utils/geo_utils.py`, `image_utils.py`, `lidar_utils.py`, `logger.py` | coordinate / raster / LIDAR helpers, logging |
+| `utils/geo_utils.py`, `image_utils.py`, `lidar_utils.py`, `logger.py` | coordinate / raster / LIDAR helpers (PDAL imported on use: `require_pdal`), logging |
 | `gui/main_window.py` | `MainWindow`: menus, import, labels, `train_model`, `run_segmentation` |
 | `gui/*.py`, `gui/dialogs/*.py` | map canvas/view/widget, layer manager, paint tool, selection; label, stretch, band combo, RF/CNN, training, results, feature dialogs |
 
@@ -51,5 +53,6 @@ classical random-forest pipeline.
 ## Tests (`pytest tests`)
 `test_imports_light`, `test_spectral`, `test_texture`, `test_feature_set_order`, `test_random_forest` (regressions for
 fixed bugs), `test_web` (API, static build, node tests), `test_web_engine` (fixtures current, GeoTIFF writer, helpers), `test_sample_data` (sample.tif layout, current),
+`test_packaging` (setup.py entry point, PDAL optional),
 `test_gui_offscreen` (MainWindow in a subprocess, skipped without the desktop deps). `tests/gui_scripts/` holds manual
 GUI scripts (not collected).

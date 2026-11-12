@@ -19,3 +19,6 @@ site/
 # Map captures written by MainWindow.capture_map_view; GDAL statistics side-cars
 geo_segmenter/gui/temp/
 *.aux.xml
+
+# pip install -e .
+*.egg-info/

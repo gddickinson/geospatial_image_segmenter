@@ -2,13 +2,25 @@
 import numpy as np
 from typing import Tuple, List, Dict, Optional
 import laspy
-import pdal
 import json
 from pathlib import Path
 from .. import config
 from .logger import setup_logger
 
 logger = setup_logger(__name__)
+
+PDAL_HINT = ("PDAL is needed for LIDAR ground classification but is not installed; it cannot be installed with pip: "
+             "use conda install -c conda-forge pdal python-pdal")
+
+
+def require_pdal():
+    """Import PDAL on first use (optional dependency: only ground classification needs it)."""
+    try:
+        import pdal
+    except ImportError as e:
+        raise ImportError(PDAL_HINT) from e
+    return pdal
+
 
 def read_las_file(
     path: str,
@@ -225,6 +237,7 @@ def classify_ground_points(
         pdal_data['Intensity'] = point_cloud[:, 4]
         
         # Run pipeline
+        pdal = require_pdal()
         pipeline = pdal.Pipeline(json.dumps(pipeline_json))
         pipeline.execute(pdal_data)
         

@@ -7,6 +7,7 @@ Subpackages (imported on first use, so the pure parts work without GDAL, PDAL, P
     models   feature extractors, RandomForestModel, CNNModel (PyTorch)
     gui      the PyQt6 desktop application
     web      FastAPI web interface and static site
+    main     main(): desktop app entry point (console script geo-segmenter)
 """
 import importlib
 
