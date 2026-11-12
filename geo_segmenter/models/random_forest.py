@@ -274,7 +274,6 @@ class RandomForestModel(GeospatialModel):
            logger.exception(e)
            raise
 
-
     def predict_proba(
         self,
         image: np.ndarray,
@@ -284,10 +283,10 @@ class RandomForestModel(GeospatialModel):
 
         Args:
             image: Image to segment
-            mask: Optional mask of valid data areas
+            mask: Optional mask of valid data areas (probabilities are 0 outside it)
 
         Returns:
-            numpy.ndarray: Probability maps for each class
+            numpy.ndarray: Probability maps, shape (n_classes, height, width), in class_names order
         """
         try:
             logger.debug("Starting probability prediction")
@@ -296,38 +295,22 @@ class RandomForestModel(GeospatialModel):
             if not self.is_trained:
                 raise RuntimeError("Model must be trained before prediction")
 
-            # Extract features
             feature_dict = self.feature_set.extract_all_features(image)
-            features = np.vstack([f.reshape(f.shape[0], -1)
-
-            for f in feature_dict.values()])
-
-            # Reshape to (n_pixels, n_features)
+            features = np.vstack([f.reshape(f.shape[0], -1) for f in feature_dict.values()])
             n_pixels = image.shape[0] * image.shape[1]
             features = features.reshape(features.shape[0], n_pixels).T
 
-            # Apply mask if provided
+            n_classes = len(self.classifier.classes_)
+            proba = np.zeros((n_pixels, n_classes))
             if mask is not None:
                 valid_pixels = mask.ravel()
-                features = features[valid_pixels]
-
-            # Predict
-            logger.debug("Running prediction")
-            if mask is not None:
-                # Initialize output array
-                pred = np.zeros(n_pixels, dtype=int)
-                # Predict only for valid pixels
-                pred[valid_pixels] = self.classifier.predict(features)
+                proba[valid_pixels] = self.classifier.predict_proba(features[valid_pixels])
             else:
-                pred = self.classifier.predict(features)
+                proba = self.classifier.predict_proba(features)
 
-            # Reshape to original dimensions
-            pred = pred.reshape(image.shape[:2])
-
-            logger.debug("Prediction completed")
-            return pred
+            return proba.T.reshape(n_classes, *image.shape[:2])
 
         except Exception as e:
-            logger.error("Error during Random Forest prediction")
+            logger.error("Error during Random Forest probability prediction")
             logger.exception(e)
             raise
